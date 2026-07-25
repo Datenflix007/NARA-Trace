@@ -20,6 +20,7 @@ export type SearchRequest = {
   naid?: string;
   record_group?: string;
   max_candidates: number;
+  demo_mode?: boolean;
 };
 
 export type SearchJobResponse = {
@@ -60,7 +61,7 @@ export type SearchResultResponse = {
   series: string | null;
   original_url: string | null;
   text_origin: string;
-  data_source: 'NARA' | 'MOCK';
+  data_source: 'NARA' | 'MOCK' | 'LOCAL';
   retrieved_at: string | null;
   evidences: MatchEvidenceResponse[];
 };
@@ -116,6 +117,20 @@ export async function fetchSearchHistory(): Promise<SearchJobResponse[]> {
     throw new Error('Die Suchverläufe konnten nicht geladen werden.');
   }
   return response.json() as Promise<SearchJobResponse[]>;
+}
+
+export async function deleteSearchJob(jobId: string): Promise<void> {
+  const response = await fetch(`/api/search/${jobId}`, { method: 'DELETE' });
+  if (!response.ok) {
+    throw new Error('Der Suchlauf konnte nicht gelöscht werden.');
+  }
+}
+
+export async function deleteSearchResult(jobId: string, resultId: number): Promise<void> {
+  const response = await fetch(`/api/search/${jobId}/results/${resultId}`, { method: 'DELETE' });
+  if (!response.ok) {
+    throw new Error('Der Treffer konnte nicht gelöscht werden.');
+  }
 }
 
 export async function fetchSettings(): Promise<SettingsResponse> {

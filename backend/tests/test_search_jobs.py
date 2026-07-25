@@ -87,8 +87,93 @@ async def test_create_search_job_with_mock_returns_labeled_mock_results(tmp_path
             assert results_response.status_code == 200
             results = results_response.json()
             assert len(results) == 4
-            assert {result["data_source"] for result in results} == {"MOCK"}
-            assert all(result["naid"].startswith("MOCK-") for result in results)
+            assert results[0]["data_source"] == "LOCAL"
+            assert results[0]["naid"] == "LOCAL-PDF-SCHULTZE-NAUMBURG-1931"
+            assert "Paul Schultze-Naumburg" in results[0]["title"]
+            assert results[0]["birth_date"] == "1869-06-10"
+            assert results[0]["birth_place"] == "Almrich"
+            evidence_text = " ".join(
+                value
+                for evidence in results[0]["evidences"]
+                for value in [evidence["label"], evidence["detail"] or ""]
+            )
+            assert "Almrich" in evidence_text
+            assert "Naumburg" in evidence_text
+            assert "Weimar" in evidence_text
+            assert {result["data_source"] for result in results} == {"LOCAL", "MOCK"}
+
+
+@pytest.mark.asyncio
+async def test_create_search_job_with_demo_mode_returns_mock_results_without_api_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("NARA_API_KEY", raising=False)
+    monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
+    reset_settings_cache()
+    reset_paths_cache()
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            create_response = await client.post(
+                "/api/search",
+                json={
+                    "first_name": "Paul",
+                    "last_name": "Schultze-Naumburg",
+                    "membership_number": "347.541",
+                    "demo_mode": True,
+                },
+            )
+            assert create_response.status_code == 201
+            job = create_response.json()
+            assert job["status"] == "complete"
+            assert job["result_count"] == 4
+            assert job["mock_mode"] is True
+            assert "Demo-Modus" in " ".join(job["warnings"])
+
+            results_response = await client.get(f"/api/search/{job['id']}/results")
+            assert results_response.status_code == 200
+            results = results_response.json()
+            assert results[0]["data_source"] == "LOCAL"
+            assert results[0]["record_group"] == "Lokale Demo-Datei"
+            assert {result["data_source"] for result in results} == {"LOCAL", "MOCK"}
+
+
+@pytest.mark.asyncio
+async def test_delete_search_result_and_search_job(tmp_path, monkeypatch):
+    monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("NARA_API_KEY", raising=False)
+    monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
+    reset_settings_cache()
+    reset_paths_cache()
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            create_response = await client.post(
+                "/api/search",
+                json={
+                    "first_name": "Paul",
+                    "last_name": "Schultze-Naumburg",
+                    "demo_mode": True,
+                },
+            )
+            job = create_response.json()
+            results_response = await client.get(f"/api/search/{job['id']}/results")
+            results = results_response.json()
+            assert len(results) == 4
+
+            delete_result_response = await client.delete(f"/api/search/{job['id']}/results/{results[0]['id']}")
+            assert delete_result_response.status_code == 204
+            remaining_results = (await client.get(f"/api/search/{job['id']}/results")).json()
+            assert len(remaining_results) == 3
+            assert all(result["id"] != results[0]["id"] for result in remaining_results)
+
+            delete_job_response = await client.delete(f"/api/search/{job['id']}")
+            assert delete_job_response.status_code == 204
+            missing_job_response = await client.get(f"/api/search/{job['id']}")
+            assert missing_job_response.status_code == 404
 
 
 @pytest.mark.asyncio

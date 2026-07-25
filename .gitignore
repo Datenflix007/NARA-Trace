@@ -31,8 +31,8 @@ frontend/.vite/
 !.env.example
 
 # Local runtime data must stay outside the repository
-NARATrace/
-naratrace-data/
+/NARATrace/
+/naratrace-data/
 
 # OS / editor
 .DS_Store

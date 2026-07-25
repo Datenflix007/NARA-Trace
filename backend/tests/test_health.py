@@ -20,6 +20,7 @@ async def test_health_endpoint_initializes_local_runtime(tmp_path, monkeypatch):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             response = await client.get("/api/health")
+            demo_response = await client.get("/demo/schultze-portrait.png")
 
     assert response.status_code == 200
     payload = response.json()
@@ -29,3 +30,5 @@ async def test_health_endpoint_initializes_local_runtime(tmp_path, monkeypatch):
     assert payload["bind_port"] == 8765
     assert payload["data_dir"] == str(data_dir.resolve())
     assert (data_dir / "database" / "naratrace.sqlite3").exists()
+    assert demo_response.status_code == 200
+    assert demo_response.headers["content-type"] == "image/png"

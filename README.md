@@ -14,13 +14,13 @@ Dieses Repository befindet sich im ersten MVP-Aufbau. Aktuell vorhanden:
 - Health-Endpunkt unter `/api/health`
 - lokaler Launcher für `python -m naratrace`
 - Start-, Build- und Test-Skripte
-- minimales Svelte/Vite-Gerüst für den nächsten Meilenstein
+- Svelte/Vite-Oberfläche mit Navigation, Suche, Einstellungen, Suchverlauf und Demo-Ergebnissen
 
 ## Datenquelle
 
 Datenquelle: U.S. National Archives and Records Administration - National Archives Catalog.
 
-NARATrace verwendet perspektivisch die National Archives Catalog API v2. Echte Suchergebnisse dürfen nicht erfunden werden. Ein ausdrücklich gekennzeichneter Mock-Modus ist für Entwicklung und Demonstration vorgesehen.
+NARATrace verwendet die National Archives Catalog API v2, sobald ein persönlicher API-Schlüssel gespeichert ist. Echte Suchergebnisse dürfen nicht erfunden werden. Ein ausdrücklich gekennzeichneter Demo-/Mock-Modus ist für Entwicklung und Demonstration vorgesehen.
 
 ## Lokaler Start
 
@@ -44,6 +44,12 @@ python -m naratrace
 
 Der Server bindet standardmäßig nur an `127.0.0.1` und verwendet Port `8765`. Beim Start wird der Standardbrowser mit `http://127.0.0.1:8765` geöffnet.
 
+Falls Port `8765` auf deinem Rechner belegt ist, starte NARATrace auf dem bereits getesteten Ausweichport:
+
+```powershell
+python -m naratrace --port 8766
+```
+
 Ohne Browserstart:
 
 ```powershell
@@ -55,6 +61,28 @@ Entwicklungsstart per Skript:
 ```powershell
 .\scripts\dev.ps1
 ```
+
+## Anzeige-Beispiel
+
+Die Startseite zeigt direkt ein Anzeige-Beispiel mit gerankten Treffern. Der erste Treffer ist als `LOCAL` markiert und verwendet die lokale Datei:
+
+```text
+C:\Users\festa\Downloads\SchulzeNaumburg_NSDAP_Kartei1931.pdf
+```
+
+Die weiteren Vergleichstreffer sind als `MOCK` markiert. Aus dem Anzeige-Beispiel öffnet sich die Detailansicht mit Originalseite links und Transkript rechts.
+
+Die Demo-Bilder liegen im Repository unter:
+
+```text
+frontend/public/demo/
+```
+
+Beim Build werden sie nach `frontend/dist/demo/` kopiert und vom Backend unter `/demo/...` ausgeliefert.
+
+## Suchverläufe
+
+Unter `Suchverläufe` können gespeicherte Suchläufe geöffnet werden. Treffer werden nach Trefferwahrscheinlichkeit sortiert angezeigt. Einzelne Treffer und komplette Suchläufe können dort gelöscht werden.
 
 ## Lokale Daten
 
@@ -110,7 +138,7 @@ Direkt:
 python -m pytest .\backend\tests
 ```
 
-Frontend-Tests werden ergänzt, sobald die Svelte-Oberfläche im nächsten Meilenstein ausgebaut ist.
+Das Projekttestskript installiert das Backend im Editable-Modus und führt Backend- sowie Frontend-Tests aus.
 
 ## Grenzen
 
