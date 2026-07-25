@@ -67,6 +67,9 @@ describe('App', () => {
     expect(screen.getByText('Anzeige-Beispiel')).toBeTruthy();
     expect(screen.getByText('LOCAL-PDF-SCHULTZE-NAUMBURG-1931')).toBeTruthy();
     expect(screen.getByText('Wohnort: Naumburg; später Weimar')).toBeTruthy();
+    expect(screen.getByAltText('Aktenfoto Paul Schultze-Naumburg').getAttribute('src')).toBe(
+      '/demo/schultze-naumburg.png'
+    );
     expect(screen.queryByText(/Ulm|Münsterplatz/)).toBeNull();
     expect(
       screen.getByText(/U.S. National Archives and Records Administration - National Archives Catalog/)

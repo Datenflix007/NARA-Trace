@@ -18,7 +18,6 @@
     type SettingsResponse
   } from './lib/api';
   import schultzePage2Url from './assets/demo/schultze-page-2.png';
-  import schultzePortraitUrl from './assets/demo/schultze-portrait.png';
 
   type RouteId = 'start' | 'search' | 'history' | 'local-documents' | 'settings' | 'methodology' | 'about' | 'result-detail';
   type DetailOrigin = 'start' | 'history' | 'search';
@@ -62,6 +61,7 @@
   ];
 
   const routeIds: RouteId[] = [...navItems.map((item) => item.id), 'result-detail'];
+  const schultzeNaumburgPhotoUrl = '/demo/schultze-naumburg.png';
 
   const demoTranscriptLines: TranscriptLine[] = [
     {
@@ -129,7 +129,7 @@
       birthDate: '10.06.1869',
       birthPlace: 'Almrich',
       residencePlace: 'Naumburg; später Weimar',
-      portraitUrl: schultzePortraitUrl,
+      portraitUrl: schultzeNaumburgPhotoUrl,
       sourcePageUrl: schultzePage2Url,
       sourcePageLabel: 'SchulzeNaumburg_NSDAP_Kartei1931.pdf, Seite 2',
       lines: demoTranscriptLines,
@@ -297,7 +297,7 @@
       birthDate: formatDate(result.birth_date) || (isLocal ? '10.06.1869' : 'nicht ermittelt'),
       birthPlace: result.birth_place || (isLocal ? 'Almrich' : 'nicht ermittelt'),
       residencePlace: isLocal ? 'Naumburg; später Weimar' : 'nicht ermittelt',
-      portraitUrl: isLocal ? schultzePortraitUrl : null,
+      portraitUrl: isLocal ? schultzeNaumburgPhotoUrl : null,
       sourcePageUrl: isLocal ? schultzePage2Url : null,
       sourcePageLabel: isLocal ? 'SchulzeNaumburg_NSDAP_Kartei1931.pdf, Seite 2' : 'kein lokales Bild',
       lines: isLocal ? demoTranscriptLines : [],

@@ -4,6 +4,10 @@ Lokale, quellennahe Personensuche im National Archives Catalog.
 
 NARATrace ist ein unabhängiges, inoffizielles Forschungswerkzeug für historische Archivarbeit mit digitalisierten Beständen der U.S. National Archives and Records Administration (NARA). Die Anwendung läuft lokal auf dem Rechner des Benutzers. Es gibt kein Cloud-Backend, keine Telemetrie und kein GitHub-Pages-Deployment.
 
+![1784997630941](image/README/1784997630941.png)
+
+![1784997634200](image/README/1784997634200.png)
+
 ## Status
 
 Dieses Repository befindet sich im ersten MVP-Aufbau. Aktuell vorhanden:
