@@ -7,6 +7,8 @@ from typing import Literal
 import keyring
 from pydantic import SecretStr
 
+from naratrace.core.config import get_settings
+
 SERVICE_NAME = "NARATrace"
 ACCOUNT_NAME = "nara-api-key"
 
@@ -19,12 +21,18 @@ class NaraApiKeyStatus:
 
 def get_nara_api_key() -> tuple[str | None, Literal["keyring", "environment", "none"]]:
     keyring_value = _read_keyring_value()
-    if keyring_value:
-        return keyring_value, "keyring"
+    if keyring_value and keyring_value.strip():
+        return keyring_value.strip(), "keyring"
 
     env_value = os.getenv("NARA_API_KEY")
-    if env_value:
-        return env_value, "environment"
+    if env_value and env_value.strip():
+        return env_value.strip(), "environment"
+
+    settings_value = get_settings().nara_api_key
+    if settings_value:
+        secret = settings_value.get_secret_value().strip()
+        if secret:
+            return secret, "environment"
 
     return None, "none"
 

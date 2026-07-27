@@ -4,16 +4,50 @@ import httpx
 import pytest
 from sqlalchemy import select
 
+from naratrace.api.schemas import SearchRequest
 from naratrace.core.config import reset_settings_cache
 from naratrace.core.paths import reset_paths_cache
 from naratrace.database.models import SearchField, SearchVariant
 from naratrace.database.session import session_scope
 from naratrace.main import create_app
 from naratrace.nara.client import NaraRecord, NaraSearchItem, NaraSearchResponse
+from naratrace.processing.jobs import build_nara_query
+
+
+def test_nara_query_rewrites_hyphenated_terms_for_boolean_search():
+    query = build_nara_query(
+        SearchRequest(
+            first_name="Paul",
+            last_name="Schultze-Naumburg",
+            birth_year=1869,
+            residence_places="Naumburg\nSaaleck\nWeimar",
+            membership_number="347.541",
+            max_candidates=100,
+        )
+    )
+
+    assert "Paul Schultze Naumburg" in query
+    assert "Schultze Naumburg" in query
+    assert "Schultze-Naumburg" not in query
+    assert '"Paul Schultze-Naumburg"' not in query
+    assert "347541" in query
+    assert " OR " in query
+    assert len(query) <= 1024
+
+
+def isolate_nara_key(monkeypatch, tmp_path, api_key: str | None = None) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("naratrace.core.secrets._read_keyring_value", lambda: None)
+    if api_key is None:
+        monkeypatch.delenv("NARA_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("NARA_API_KEY", api_key)
+    reset_settings_cache()
 
 
 @pytest.mark.asyncio
 async def test_create_search_job_without_mock_does_not_invent_results(tmp_path, monkeypatch):
+    isolate_nara_key(monkeypatch, tmp_path)
     monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
     reset_settings_cache()
@@ -178,8 +212,8 @@ async def test_delete_search_result_and_search_job(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_create_search_job_with_api_key_stores_real_nara_candidates(tmp_path, monkeypatch):
+    isolate_nara_key(monkeypatch, tmp_path, api_key="test-key")
     monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("NARA_API_KEY", "test-key")
     monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
     reset_settings_cache()
     reset_paths_cache()

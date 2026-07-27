@@ -34,6 +34,7 @@ from naratrace.nara.client import NaraCatalogClient, NaraClientError, NaraRecord
 LOCAL_DEMO_PDF_PATH = Path.home() / "Downloads" / "SchulzeNaumburg_NSDAP_Kartei1931.pdf"
 LOCAL_DEMO_PDF_SERIES = "A3340-MFKL-R0013.pdf"
 LOCAL_DEMO_PDF_PAGE_COUNT = 4
+NARA_QUERY_MAX_LENGTH = 1024
 
 
 async def create_search_job(payload: SearchRequest) -> SearchJobResponse:
@@ -111,11 +112,14 @@ async def create_search_job(payload: SearchRequest) -> SearchJobResponse:
         job.status = "complete"
         job.progress_current = 6
         job.completed_at = datetime.now(timezone.utc)
+        job.warnings = list(getattr(nara_response, "warnings", []))
         if stored_count == 0:
-            job.warnings = [
-                "NARA-Abfrage erfolgreich, aber keine Kandidaten gefunden.",
-                "Versuche weniger enge Angaben oder andere Namensvarianten.",
-            ]
+            job.warnings.extend(
+                [
+                    "NARA-Abfrage erfolgreich, aber keine Kandidaten gefunden.",
+                    "Versuche weniger enge Angaben oder andere Namensvarianten.",
+                ]
+            )
         session.flush()
         return serialize_job(session, job.id)
 
@@ -280,7 +284,7 @@ def build_nara_query(payload: SearchRequest) -> str:
     clauses: list[str] = []
     full_name = " ".join(value for value in [payload.first_name, payload.last_name] if value).strip()
     if full_name:
-        clauses.append(f'"{full_name}"')
+        clauses.append(full_name)
     if payload.last_name:
         clauses.append(payload.last_name)
     if payload.membership_number:
@@ -294,7 +298,25 @@ def build_nara_query(payload: SearchRequest) -> str:
         clauses.extend(line.strip() for line in payload.residence_places.splitlines() if line.strip())
     if payload.variants:
         clauses.extend(line.strip() for line in payload.variants.splitlines() if line.strip())
-    return " OR ".join(dedupe_query_terms(clauses)) or payload.last_name
+    terms = dedupe_query_terms([sanitize_nara_query_term(clause) for clause in clauses])
+    return join_nara_query_terms(terms) or sanitize_nara_query_term(payload.last_name) or payload.last_name
+
+
+def sanitize_nara_query_term(value: str) -> str:
+    cleaned = value.strip().replace('"', " ")
+    cleaned = cleaned.replace("-", " ")
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def join_nara_query_terms(terms: list[str]) -> str:
+    query = ""
+    for term in terms:
+        separator = " OR " if query else ""
+        next_query = f"{query}{separator}{term}"
+        if len(next_query) > NARA_QUERY_MAX_LENGTH:
+            break
+        query = next_query
+    return query
 
 
 def dedupe_query_terms(values: list[str]) -> list[str]:

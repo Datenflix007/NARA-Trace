@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -42,6 +42,7 @@ class NaraSearchResponse:
     items: list[NaraSearchItem]
     total: int | None
     raw: dict[str, Any]
+    warnings: list[str] = field(default_factory=list)
 
 
 class NaraCatalogClient:
@@ -58,8 +59,22 @@ class NaraCatalogClient:
         }
 
     async def search_records(self, params: dict[str, Any]) -> NaraSearchResponse:
-        response = await self._get("/records/search", params=params)
-        return self._parse_search_response(response)
+        try:
+            response = await self._get("/records/search", params=params)
+            return self._parse_search_response(response)
+        except NaraClientError as exc:
+            if exc.status_code is None or exc.status_code < 500 or not params.get("includeExtractedText"):
+                raise
+            fallback_params = dict(params)
+            fallback_params.pop("includeExtractedText", None)
+            fallback_params["abbreviated"] = "true"
+            response = await self._get("/records/search", params=fallback_params)
+            parsed = self._parse_search_response(response)
+            parsed.warnings.append(
+                "NARA lieferte für die Detailabfrage einen temporären Serverfehler; "
+                "NARATrace hat automatisch eine kleinere Metadatenabfrage verwendet."
+            )
+            return parsed
 
     async def test_key(self) -> None:
         await self.search_records({"q": "constitution", "limit": 1, "abbreviated": "true"})
@@ -97,7 +112,8 @@ class NaraCatalogClient:
         content_type = response.headers.get("content-type", "")
         if "application/json" not in content_type.lower():
             raise NaraClientError(
-                "NARA Catalog API lieferte keine JSON-Antwort. Wahrscheinlich fehlt ein gültiger API-Schlüssel."
+                "NARA Catalog API lieferte keine JSON-Antwort. "
+                "Entweder wurde der API-Schlüssel abgelehnt oder NARA konnte die Suchsyntax nicht als API-Anfrage verarbeiten."
             )
 
         try:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from pydantic import Field
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from naratrace import __version__
@@ -16,6 +17,7 @@ class AppSettings(BaseSettings):
     mock_mode: bool = Field(default=False, alias="NARATRACE_MOCK_MODE")
     log_level: str = Field(default="info", alias="NARATRACE_LOG_LEVEL")
     data_dir: str | None = Field(default=None, alias="NARATRACE_DATA_DIR")
+    nara_api_key: SecretStr | None = Field(default=None, alias="NARA_API_KEY")
 
     model_config = SettingsConfigDict(
         env_file=".env",
