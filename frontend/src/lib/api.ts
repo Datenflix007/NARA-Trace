@@ -63,6 +63,12 @@ export type SearchResultResponse = {
   text_origin: string;
   data_source: 'NARA' | 'MOCK' | 'LOCAL';
   retrieved_at: string | null;
+  source_page_id: number | null;
+  source_page_url: string | null;
+  source_page_label: string | null;
+  transcript_text: string | null;
+  transcript_source: string | null;
+  transcript_edited: boolean;
   evidences: MatchEvidenceResponse[];
 };
 
@@ -73,12 +79,23 @@ export type SettingsResponse = {
   database_path: string;
   nara_api_key_configured: boolean;
   nara_api_key_source: 'keyring' | 'environment' | 'none';
+  nara_api_usage: NaraApiUsageResponse;
+};
+
+export type NaraApiUsageResponse = {
+  request_count: number;
+  request_limit: number;
+  percent_used: number;
+  period: string;
+  reset_at: string;
+  counted_locally: boolean;
 };
 
 export type ApiKeyTestResponse = {
   ok: boolean;
   live_tested: boolean;
   message: string;
+  nara_api_usage: NaraApiUsageResponse | null;
 };
 
 export async function fetchHealth(): Promise<HealthResponse> {
@@ -111,6 +128,14 @@ export async function fetchSearchResults(jobId: string): Promise<SearchResultRes
   return response.json() as Promise<SearchResultResponse[]>;
 }
 
+export async function fetchSearchJob(jobId: string): Promise<SearchJobResponse> {
+  const response = await fetch(`/api/search/${jobId}`);
+  if (!response.ok) {
+    throw new Error('Der Suchjob-Status konnte nicht geladen werden.');
+  }
+  return response.json() as Promise<SearchJobResponse>;
+}
+
 export async function fetchSearchHistory(): Promise<SearchJobResponse[]> {
   const response = await fetch('/api/search');
   if (!response.ok) {
@@ -131,6 +156,24 @@ export async function deleteSearchResult(jobId: string, resultId: number): Promi
   if (!response.ok) {
     throw new Error('Der Treffer konnte nicht gelöscht werden.');
   }
+}
+
+export async function updateSearchResultTranscript(
+  jobId: string,
+  resultId: number,
+  transcriptText: string
+): Promise<SearchResultResponse> {
+  const response = await fetch(`/api/search/${jobId}/results/${resultId}/transcript`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ transcript_text: transcriptText })
+  });
+  if (!response.ok) {
+    throw new Error('Die Transkription konnte nicht gespeichert werden.');
+  }
+  return response.json() as Promise<SearchResultResponse>;
 }
 
 export async function fetchSettings(): Promise<SettingsResponse> {

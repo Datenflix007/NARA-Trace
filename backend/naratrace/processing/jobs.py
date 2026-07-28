@@ -19,6 +19,10 @@ from naratrace.core.config import get_settings
 from naratrace.core.secrets import get_nara_api_key
 from naratrace.database.models import (
     CandidateRecord,
+    CandidatePage,
+    DigitalObject,
+    ExtractedText,
+    ManualCorrection,
     MatchEvidence,
     SearchField,
     SearchJob,
@@ -29,6 +33,11 @@ from naratrace.database.models import (
 )
 from naratrace.database.session import session_scope
 from naratrace.nara.client import NaraCatalogClient, NaraClientError, NaraRecord
+from naratrace.processing.documents import (
+    MaterializedPage,
+    ensure_display_image,
+    materialize_best_page,
+)
 
 
 LOCAL_DEMO_PDF_PATH = Path.home() / "Downloads" / "SchulzeNaumburg_NSDAP_Kartei1931.pdf"
@@ -44,10 +53,10 @@ async def create_search_job(payload: SearchRequest) -> SearchJobResponse:
         title = build_job_title(payload)
         now = datetime.now(timezone.utc)
         job = SearchJob(
-            status="searching_catalog",
+            status="queued",
             mode="quick",
             title=title,
-            progress_current=1,
+            progress_current=0,
             progress_total=6,
             started_at=now,
             warnings=[],
@@ -61,58 +70,72 @@ async def create_search_job(payload: SearchRequest) -> SearchJobResponse:
         add_profile_fields(session, profile, payload)
         add_queries(session, job, payload)
 
+        session.flush()
+        return serialize_job(session, job.id)
+
+
+async def run_search_job(job_id: str, payload: SearchRequest) -> None:
+    try:
+        await execute_search_job(job_id, payload)
+    except Exception as exc:
+        fail_search_job(job_id, "Interner Fehler beim Suchlauf.", [str(exc)])
+
+
+async def execute_search_job(job_id: str, payload: SearchRequest) -> None:
+    settings = get_settings()
+    mock_mode = settings.mock_mode or payload.demo_mode
+    update_job_state(job_id, "preparing_search", 1)
+
+    with session_scope() as session:
+        job = session.get(SearchJob, job_id)
+        if job is None:
+            return
+        title = job.title or build_job_title(payload)
         if mock_mode:
             add_mock_results(session, job, title)
             job.status = "complete"
             job.progress_current = 6
-            job.completed_at = now
+            job.completed_at = datetime.now(timezone.utc)
             job.warnings = [
-                "Demo-Modus: Treffer stammen aus lokalen Demo-Daten oder künstlichen Beispieldaten, nicht aus einer Live-NARA-Abfrage.",
-                "Der lokale PDF-Treffer ist als LOCAL markiert; künstliche Vergleichstreffer sind als MOCK markiert.",
+                "Demo-Modus: Treffer stammen aus lokalen Demo-Daten oder künstlichen Beispieldaten.",
                 "Echte NARA-Daten werden nur mit gültigem NARA API-Schlüssel abgerufen.",
             ]
             session.flush()
-            return serialize_job(session, job.id)
+            return
 
         api_key, key_source = get_nara_api_key()
         if not api_key:
             job.status = "failed"
             job.progress_current = 1
-            job.completed_at = now
+            job.completed_at = datetime.now(timezone.utc)
             job.error_message = "NARA API-Schlüssel fehlt."
             job.warnings = [
                 "Bitte in den Einstellungen einen NARA API-Schlüssel speichern oder NARA_API_KEY als Umgebungsvariable setzen.",
                 "Ohne gültigen Schlüssel kann NARATrace keine echten NARA-Treffer abrufen.",
             ]
             session.flush()
-            return serialize_job(session, job.id)
+            return
 
+    update_job_state(job_id, "searching_catalog", 2)
     try:
         nara_response = await run_nara_candidate_search(payload, api_key)
     except NaraClientError as exc:
-        with session_scope() as session:
-            job = session.get(SearchJob, job.id)
-            if job is None:
-                raise
-            job.status = "failed"
-            job.progress_current = 1
-            job.completed_at = datetime.now(timezone.utc)
-            job.error_message = str(exc)
-            job.warnings = [str(exc), f"API-Schlüsselquelle: {key_source}."]
-            session.flush()
-            return serialize_job(session, job.id)
+        fail_search_job(job_id, str(exc), [str(exc), f"API-Schlüsselquelle: {key_source}."])
+        return
 
+    update_job_state(job_id, "downloading_pages_ocr", 4)
     with session_scope() as session:
-        job = session.get(SearchJob, job.id)
+        job = session.get(SearchJob, job_id)
         if job is None:
-            raise LookupError(job.id)
+            return
         job.status = "ranking"
         job.progress_current = 5
-        stored_count = store_nara_candidates(session, job, payload, nara_response)
+        stored_count, materialization_warnings = await store_nara_candidates(session, job, payload, nara_response)
         job.status = "complete"
         job.progress_current = 6
         job.completed_at = datetime.now(timezone.utc)
         job.warnings = list(getattr(nara_response, "warnings", []))
+        job.warnings.extend(materialization_warnings)
         if stored_count == 0:
             job.warnings.extend(
                 [
@@ -121,7 +144,28 @@ async def create_search_job(payload: SearchRequest) -> SearchJobResponse:
                 ]
             )
         session.flush()
-        return serialize_job(session, job.id)
+
+
+def update_job_state(job_id: str, status: str, progress_current: int) -> None:
+    with session_scope() as session:
+        job = session.get(SearchJob, job_id)
+        if job is None:
+            return
+        job.status = status
+        job.progress_current = progress_current
+        session.flush()
+
+
+def fail_search_job(job_id: str, message: str, warnings: list[str] | None = None) -> None:
+    with session_scope() as session:
+        job = session.get(SearchJob, job_id)
+        if job is None:
+            return
+        job.status = "failed"
+        job.completed_at = datetime.now(timezone.utc)
+        job.error_message = message
+        job.warnings = warnings or [message]
+        session.flush()
 
 
 def list_search_jobs(limit: int = 20) -> list[SearchJobResponse]:
@@ -148,6 +192,14 @@ def get_search_results(job_id: str) -> list[SearchResultResponse] | None:
             .where(SearchResult.job_id == job_id)
             .options(
                 selectinload(SearchResult.candidate_record),
+                selectinload(SearchResult.candidate_record)
+                .selectinload(CandidateRecord.digital_objects)
+                .selectinload(DigitalObject.pages)
+                .selectinload(CandidatePage.texts),
+                selectinload(SearchResult.candidate_record)
+                .selectinload(CandidateRecord.digital_objects)
+                .selectinload(DigitalObject.pages)
+                .selectinload(CandidatePage.manual_corrections),
                 selectinload(SearchResult.evidences),
             )
             .order_by(desc(SearchResult.match_score))
@@ -176,6 +228,88 @@ def delete_search_result(job_id: str, result_id: int) -> bool:
         session.delete(result)
         session.flush()
         return True
+
+
+def update_search_result_transcript(job_id: str, result_id: int, transcript_text: str) -> SearchResultResponse | None:
+    with session_scope() as session:
+        result = load_result_for_serialization(session, job_id, result_id)
+        if result is None:
+            return None
+        page = get_relevant_page(result) or create_transcript_only_page(session, result)
+        previous_text, _, _ = current_page_text(page)
+        selected_text = select_current_extracted_text(page)
+        if selected_text is not None:
+            selected_text.human_reviewed = True
+            selected_text.manually_corrected = True
+        session.add(
+            ManualCorrection(
+                page=page,
+                extracted_text=selected_text,
+                previous_text=previous_text,
+                corrected_text=transcript_text,
+            )
+        )
+        session.flush()
+        refreshed = load_result_for_serialization(session, job_id, result_id)
+        assert refreshed is not None
+        return serialize_result(refreshed)
+
+
+def get_candidate_page_image_path(page_id: int) -> Path | None:
+    with session_scope() as session:
+        page = session.get(CandidatePage, page_id)
+        if page is None or not page.local_path:
+            return None
+        path = Path(page.local_path)
+        if not path.exists() or not path.is_file():
+            return None
+        display_path = ensure_display_image(path)
+        if not display_path.exists() or not display_path.is_file():
+            return None
+        return display_path
+
+
+def load_result_for_serialization(session: Session, job_id: str, result_id: int) -> SearchResult | None:
+    return session.scalar(
+        select(SearchResult)
+        .where(SearchResult.job_id == job_id, SearchResult.id == result_id)
+        .options(
+            selectinload(SearchResult.candidate_record)
+            .selectinload(CandidateRecord.digital_objects)
+            .selectinload(DigitalObject.pages)
+            .selectinload(CandidatePage.texts),
+            selectinload(SearchResult.candidate_record)
+            .selectinload(CandidateRecord.digital_objects)
+            .selectinload(DigitalObject.pages)
+            .selectinload(CandidatePage.manual_corrections),
+            selectinload(SearchResult.evidences),
+        )
+    )
+
+
+def create_transcript_only_page(session: Session, result: SearchResult) -> CandidatePage:
+    digital_object = DigitalObject(
+        candidate_record_id=result.candidate_record_id,
+        object_type="transcript-only",
+        retrieved_at=datetime.now(timezone.utc),
+    )
+    session.add(digital_object)
+    session.flush()
+    page = CandidatePage(
+        digital_object_id=digital_object.id,
+        page_number=1,
+        is_relevant=True,
+        retrieved_at=datetime.now(timezone.utc),
+    )
+    session.add(page)
+    session.flush()
+    return page
+
+
+def select_current_extracted_text(page: CandidatePage) -> ExtractedText | None:
+    texts = [text for text in page.texts if text.raw_text and text.raw_text.strip()]
+    texts.sort(key=text_priority)
+    return texts[0] if texts else None
 
 
 def build_job_title(payload: SearchRequest) -> str:
@@ -334,8 +468,9 @@ def dedupe_query_terms(values: list[str]) -> list[str]:
     return result
 
 
-def store_nara_candidates(session: Session, job: SearchJob, payload: SearchRequest, nara_response) -> int:
+async def store_nara_candidates(session: Session, job: SearchJob, payload: SearchRequest, nara_response) -> tuple[int, list[str]]:
     stored = 0
+    warnings: list[str] = []
     seen_naids: set[str] = set()
     for item in nara_response.items:
         record = item.record
@@ -343,6 +478,9 @@ def store_nara_candidates(session: Session, job: SearchJob, payload: SearchReque
         if not naid or naid in seen_naids:
             continue
         seen_naids.add(naid)
+        materialized_page = await materialize_best_page(job.id, naid, record, payload)
+        if materialized_page and materialized_page.warning:
+            warnings.append(f"NAID {naid}: {materialized_page.warning}")
         candidate = CandidateRecord(
             job_id=job.id,
             naid=naid,
@@ -360,14 +498,40 @@ def store_nara_candidates(session: Session, job: SearchJob, payload: SearchReque
         )
         session.add(candidate)
         session.flush()
+        page = add_materialized_page(session, candidate, materialized_page)
         score, category, evidences = score_record(payload, record)
+        if page is not None:
+            score = min(score + 8, 100)
+            category = category_for_score(score)
+            evidences.append(
+                (
+                    "positive",
+                    "Relevante Originalseite lokal geladen"
+                    if page.local_path
+                    else "Relevante Originalseite aus NARA-Digitalobjekt erkannt",
+                    page.original_url or page.image_url,
+                    8,
+                    "NARA-Digitalobjekt",
+                )
+            )
+            page_text = current_page_text(page)
+            if page_text[0]:
+                evidences.append(
+                    (
+                        "positive",
+                        "Transkript für die Originalseite verfügbar",
+                        page_text[1],
+                        6,
+                        page_text[1],
+                    )
+                )
         result = SearchResult(
             job_id=job.id,
             candidate_record_id=candidate.id,
             match_score=score,
             category=category,
             suspected_person_name=build_job_title(payload),
-            relevant_pages_count=count_relevant_objects(record),
+            relevant_pages_count=1 if page is not None else count_relevant_objects(record),
         )
         session.add(result)
         session.flush()
@@ -385,7 +549,117 @@ def store_nara_candidates(session: Session, job: SearchJob, payload: SearchReque
                 )
             )
         stored += 1
-    return stored
+    return stored, warnings
+
+
+def add_materialized_page(session: Session, candidate: CandidateRecord, materialized_page: MaterializedPage | None) -> CandidatePage | None:
+    if materialized_page is None:
+        return None
+
+    now = datetime.now(timezone.utc)
+    digital_object_data = materialized_page.object_data
+    digital_object = DigitalObject(
+        candidate_record_id=candidate.id,
+        object_id=stringify_optional(digital_object_data.get("objectId") or digital_object_data.get("object_id")),
+        object_type=stringify_optional(digital_object_data.get("objectType") or digital_object_data.get("type")),
+        url=materialized_page.image_url,
+        thumbnail_url=first_string(
+            digital_object_data,
+            "thumbnailUrl",
+            "thumbnail_url",
+            "thumbnail",
+        ),
+        file_name=first_string(digital_object_data, "objectFilename", "filename", "fileName"),
+        mime_type=first_string(digital_object_data, "mimeType", "mime_type", "contentType"),
+        size_bytes=parse_optional_int(digital_object_data.get("objectFileSize") or digital_object_data.get("sizeBytes")),
+        retrieved_at=now if materialized_page.local_path or materialized_page.nara_text or materialized_page.ocr_text else None,
+    )
+    session.add(digital_object)
+    session.flush()
+
+    page = CandidatePage(
+        digital_object_id=digital_object.id,
+        page_number=materialized_page.page_number,
+        image_url=materialized_page.image_url,
+        local_path=materialized_page.local_path,
+        original_url=materialized_page.image_url,
+        is_relevant=True,
+        retrieved_at=now if materialized_page.local_path else None,
+    )
+    session.add(page)
+    session.flush()
+
+    if materialized_page.nara_text:
+        session.add(
+            ExtractedText(
+                page=page,
+                raw_text=materialized_page.nara_text,
+                normalized_text=normalize_text(materialized_page.nara_text),
+                source_type="NARA Extracted Text",
+                engine="NARA Catalog",
+                language=None,
+            )
+        )
+    if materialized_page.ocr_text and normalize_text(materialized_page.ocr_text) != normalize_text(materialized_page.nara_text or ""):
+        session.add(
+            ExtractedText(
+                page=page,
+                raw_text=materialized_page.ocr_text,
+                normalized_text=normalize_text(materialized_page.ocr_text),
+                source_type="lokal erzeugte OCR",
+                engine=materialized_page.ocr_engine,
+                language="deu+eng",
+            )
+        )
+    session.flush()
+    return page
+
+
+def current_page_text(page: CandidatePage) -> tuple[str | None, str | None, bool]:
+    corrections = sorted(page.manual_corrections, key=lambda correction: correction.created_at, reverse=True)
+    if corrections:
+        return corrections[0].corrected_text, "manuelle Korrektur", True
+
+    texts = [text for text in page.texts if text.raw_text and text.raw_text.strip()]
+    texts.sort(key=text_priority)
+    if not texts:
+        return None, None, False
+    selected = texts[0]
+    return selected.raw_text, selected.source_type, selected.manually_corrected
+
+
+def text_priority(text: ExtractedText) -> tuple[int, datetime]:
+    source_priority = {
+        "NARA-Transkription": 0,
+        "NARA Extracted Text": 1,
+        "lokal erzeugte OCR": 2,
+    }
+    return source_priority.get(text.source_type, 10), text.created_at
+
+
+def stringify_optional(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def first_string(values: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = values.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def parse_optional_int(value: Any) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        digits = re.sub(r"\D+", "", value)
+        if digits:
+            return int(digits)
+    return None
 
 
 def extract_record_group(record: NaraRecord) -> str | None:
@@ -741,6 +1015,8 @@ def serialize_result(result: SearchResult) -> SearchResultResponse:
         data_source = "MOCK"
     else:
         data_source = "NARA"
+    page = get_relevant_page(result)
+    transcript_text, transcript_source, transcript_edited = current_page_text(page) if page else (None, None, False)
     return SearchResultResponse(
         id=result.id,
         job_id=result.job_id,
@@ -758,6 +1034,12 @@ def serialize_result(result: SearchResult) -> SearchResultResponse:
         text_origin=record.text_origin,
         data_source=data_source,
         retrieved_at=record.retrieved_at,
+        source_page_id=page.id if page else None,
+        source_page_url=build_source_page_url(page) if page else None,
+        source_page_label=build_source_page_label(record, page) if page else None,
+        transcript_text=transcript_text,
+        transcript_source=transcript_source,
+        transcript_edited=transcript_edited,
         evidences=[
             MatchEvidenceResponse(
                 kind=evidence.kind,
@@ -769,3 +1051,31 @@ def serialize_result(result: SearchResult) -> SearchResultResponse:
             for evidence in result.evidences
         ],
     )
+
+
+def get_relevant_page(result: SearchResult) -> CandidatePage | None:
+    pages: list[CandidatePage] = []
+    for digital_object in result.candidate_record.digital_objects:
+        pages.extend(digital_object.pages)
+    if not pages:
+        return None
+    relevant = [page for page in pages if page.is_relevant]
+    candidates = relevant or pages
+    candidates.sort(key=lambda page: (0 if page.local_path else 1, page.page_number, page.id))
+    return candidates[0]
+
+
+def build_source_page_url(page: CandidatePage | None) -> str | None:
+    if page is None:
+        return None
+    if page.local_path and Path(page.local_path).exists():
+        return f"/api/pages/{page.id}/image"
+    return page.image_url
+
+
+def build_source_page_label(record: CandidateRecord, page: CandidatePage | None) -> str | None:
+    if page is None:
+        return None
+    file_name = page.digital_object.file_name if page.digital_object else None
+    title = file_name or record.title or f"NAID {record.naid}"
+    return f"{title}, Objekt/Seite {page.page_number}"

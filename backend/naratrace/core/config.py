@@ -18,6 +18,7 @@ class AppSettings(BaseSettings):
     log_level: str = Field(default="info", alias="NARATRACE_LOG_LEVEL")
     data_dir: str | None = Field(default=None, alias="NARATRACE_DATA_DIR")
     nara_api_key: SecretStr | None = Field(default=None, alias="NARA_API_KEY")
+    nara_monthly_request_limit: int = Field(default=10000, ge=1, alias="NARATRACE_NARA_MONTHLY_REQUEST_LIMIT")
 
     model_config = SettingsConfigDict(
         env_file=".env",

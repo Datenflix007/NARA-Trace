@@ -8,6 +8,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from naratrace import __version__
+from naratrace.nara.usage import record_nara_api_request
 
 
 class NaraClientError(RuntimeError):
@@ -90,6 +91,7 @@ class NaraCatalogClient:
                     follow_redirects=False,
                 ) as client:
                     response = await client.get(path, params=clean_params(params))
+                record_nara_api_request(self.api_key)
                 return self._handle_response(response)
             except NaraClientError:
                 raise

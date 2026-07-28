@@ -39,6 +39,12 @@ function localResult(overrides = {}) {
     text_origin: 'lokale PDF ohne extrahierbare Textschicht',
     data_source: 'LOCAL',
     retrieved_at: new Date().toISOString(),
+    source_page_id: null,
+    source_page_url: null,
+    source_page_label: null,
+    transcript_text: null,
+    transcript_source: null,
+    transcript_edited: false,
     evidences: [
       {
         kind: 'positive',
@@ -48,6 +54,26 @@ function localResult(overrides = {}) {
         source_type: 'lokale PDF ohne extrahierbare Textschicht'
       }
     ],
+    ...overrides
+  };
+}
+
+function settingsResponse(overrides = {}) {
+  return {
+    mock_mode: false,
+    data_dir: 'C:\\Temp\\NARATrace',
+    cache_dir: 'C:\\Temp\\NARATrace\\cache',
+    database_path: 'C:\\Temp\\NARATrace\\database\\naratrace.sqlite3',
+    nara_api_key_configured: true,
+    nara_api_key_source: 'keyring',
+    nara_api_usage: {
+      request_count: 123,
+      request_limit: 10000,
+      percent_used: 1.23,
+      period: '2026-07',
+      reset_at: '2026-08-01T00:00:00Z',
+      counted_locally: true
+    },
     ...overrides
   };
 }
@@ -74,6 +100,24 @@ describe('App', () => {
     expect(
       screen.getByText(/U.S. National Archives and Records Administration - National Archives Catalog/)
     ).toBeTruthy();
+  });
+
+  it('zeigt die NARA-API-Nutzung prozentual und numerisch im Header', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input) === '/api/settings') {
+        return new Response(JSON.stringify(settingsResponse()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    render(App);
+
+    await waitFor(() => {
+      expect(screen.getByText('NARA API: 1,2 % (123/10000)')).toBeTruthy();
+    });
   });
 
   it('öffnet vom Startseiten-Beispiel die Detailansicht mit synchroner Markierung', async () => {
@@ -121,7 +165,7 @@ describe('App', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = String(input);
       if (url === '/api/search' && init?.method === 'POST') {
-        return new Response(JSON.stringify(searchJob({ id: 'job-new', status: 'partial', result_count: 0 })), {
+        return new Response(JSON.stringify(searchJob({ id: 'job-new', result_count: 0 })), {
           status: 201,
           headers: { 'Content-Type': 'application/json' }
         });
@@ -153,6 +197,197 @@ describe('App', () => {
     const searchCall = fetchMock.mock.calls.find(([url, init]) => String(url) === '/api/search' && init?.method === 'POST');
     expect(searchCall?.[1]?.body).toEqual(expect.stringContaining('membership_number'));
     expect(searchCall?.[1]?.body).not.toEqual(expect.stringContaining('demo_mode'));
+  });
+
+  it('zeigt bei laufendem Suchjob Fortschritt, Restzeit und aktuellen Schritt', async () => {
+    let progressStatusCalls = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/settings') {
+        return new Response(JSON.stringify(settingsResponse()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (url === '/api/search' && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify(
+            searchJob({
+              id: 'job-progress',
+              status: 'searching_catalog',
+              progress_current: 2,
+              progress_total: 6,
+              result_count: 0,
+              completed_at: null
+            })
+          ),
+          { status: 201, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url === '/api/search/job-progress') {
+        progressStatusCalls += 1;
+        if (progressStatusCalls === 1) {
+          return new Response(JSON.stringify({ detail: 'kurz nicht erreichbar' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        return new Response(JSON.stringify(searchJob({ id: 'job-progress', result_count: 0 })), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (url === '/api/search/job-progress/results') {
+        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url === '/api/search') {
+        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    render(App);
+
+    await fireEvent.click(screen.getByRole('link', { name: 'Neue Suche' }));
+    await fireEvent.input(screen.getByLabelText('Nachname'), { target: { value: 'Schultze-Naumburg' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Suchjob anlegen' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('NARA Catalog wird abgefragt')).toBeTruthy();
+    });
+    expect(screen.getByRole('progressbar', { name: 'Fortschritt des Suchjobs' }).getAttribute('aria-valuenow')).toBe(
+      '33'
+    );
+    expect(screen.getByText('2 von 6 Schritten (33 %)')).toBeTruthy();
+    expect(screen.getByText('Restzeit')).toBeTruthy();
+    expect(screen.getByText('Voraussichtliche Laufzeit')).toBeTruthy();
+
+    await waitFor(
+      () => {
+        expect(screen.getByText('Statusantwort kurz unterbrochen. Der Suchjob läuft weiter.')).toBeTruthy();
+      },
+      { timeout: 2500 }
+    );
+
+    await waitFor(
+      () => {
+        expect(screen.getByText('Suche abgeschlossen')).toBeTruthy();
+        expect(screen.getByText('6 von 6 Schritten (100 %)')).toBeTruthy();
+      },
+      { timeout: 4000 }
+    );
+  });
+
+  it('zeigt Treffer einer neuen Suche direkt als Original-und-Transkript-Karte', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/settings') {
+        return new Response(JSON.stringify(settingsResponse()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (url === '/api/search' && init?.method === 'POST') {
+        return new Response(JSON.stringify(searchJob({ id: 'job-new', result_count: 1 })), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (url === '/api/search/job-new/results') {
+        return new Response(
+          JSON.stringify([
+            localResult({
+              id: 9,
+              job_id: 'job-new',
+              naid: '123456',
+              title: 'NARA-Testkarte',
+              data_source: 'NARA',
+              source_page_url: '/api/pages/9/image',
+              source_page_label: 'NARA-Testkarte, Objekt/Seite 1',
+              transcript_text: 'OCR Volltext der Karte',
+              transcript_source: 'NARA Extracted Text'
+            })
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url === '/api/search') {
+        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    render(App);
+
+    await fireEvent.click(screen.getByRole('link', { name: 'Neue Suche' }));
+    await fireEvent.input(screen.getByLabelText('Nachname'), { target: { value: 'Schultze-Naumburg' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Suchjob anlegen' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'NARA-Testkarte, Objekt/Seite 1' })).toBeTruthy();
+    });
+    expect(screen.getByText('Originalseite')).toBeTruthy();
+    expect(screen.getByText('Transkript')).toBeTruthy();
+    expect((screen.getByLabelText('Transkription') as HTMLTextAreaElement).value).toBe('OCR Volltext der Karte');
+  });
+
+  it('zeigt fuer Metadaten-Treffer ohne Bildcache eine NARA-Catalog-Vorschau', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/settings') {
+        return new Response(JSON.stringify(settingsResponse()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (url === '/api/search' && init?.method === 'POST') {
+        return new Response(JSON.stringify(searchJob({ id: 'job-catalog', result_count: 1 })), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (url === '/api/search/job-catalog/results') {
+        return new Response(
+          JSON.stringify([
+            localResult({
+              id: 11,
+              job_id: 'job-catalog',
+              naid: '270851699',
+              title: 'Number 944 (Serial 944) (1 of 2)',
+              data_source: 'NARA',
+              match_score: 10,
+              category: 'ausgeschlossen',
+              original_url: 'https://catalog.archives.gov/id/270851699',
+              source_page_id: null,
+              source_page_url: null,
+              source_page_label: null,
+              transcript_text: null,
+              transcript_source: null,
+              text_origin: 'kein Text verfuegbar'
+            })
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url === '/api/search') {
+        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    render(App);
+
+    await fireEvent.click(screen.getByRole('link', { name: 'Neue Suche' }));
+    await fireEvent.input(screen.getByLabelText('Nachname'), { target: { value: 'Schultze-Naumburg' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Suchjob anlegen' }));
+
+    await waitFor(() => {
+      expect(screen.getByTitle('NARA Catalog Datensatz 270851699')).toBeTruthy();
+    });
+    expect(screen.getByRole('link', { name: 'NARA-Datensatz öffnen' }).getAttribute('href')).toBe(
+      'https://catalog.archives.gov/id/270851699'
+    );
+    expect(screen.queryByText('Kein lokales Originalbild')).toBeNull();
   });
 
   it('öffnet im Suchverlauf einen Job und sortiert Treffer nach Wahrscheinlichkeit', async () => {
@@ -234,5 +469,74 @@ describe('App', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('/api/search/job-1/results/1', { method: 'DELETE' });
     expect(fetchMock).toHaveBeenCalledWith('/api/search/job-1', { method: 'DELETE' });
+  });
+
+  it('speichert bearbeitete Transkriptionen für Suchergebnisse', async () => {
+    const result = localResult({
+      id: 7,
+      job_id: 'job-1',
+      naid: '123456',
+      title: 'NARA-Testkarte',
+      data_source: 'NARA',
+      suspected_person_name: 'Paul Schultze-Naumburg',
+      source_page_id: 3,
+      source_page_url: '/api/pages/3/image',
+      source_page_label: 'NARA-Testkarte, Objekt/Seite 1',
+      transcript_text: 'Raw OCR Schultze Naumburg',
+      transcript_source: 'NARA Extracted Text',
+      transcript_edited: false
+    });
+    const updatedResult = {
+      ...result,
+      transcript_text: 'Korrigierte Transkription',
+      transcript_source: 'manuelle Korrektur',
+      transcript_edited: true
+    };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/search') {
+        return new Response(JSON.stringify([searchJob({ result_count: 1 })]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (url === '/api/search/job-1/results' && !init) {
+        return new Response(JSON.stringify([result]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url === '/api/search/job-1/results/7/transcript' && init?.method === 'PATCH') {
+        return new Response(JSON.stringify(updatedResult), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    render(App);
+
+    await fireEvent.click(screen.getByRole('link', { name: 'Suchverläufe' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /complete · 1 Treffer/ })).toBeTruthy();
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /complete · 1 Treffer/ }));
+    await waitFor(() => {
+      expect(screen.getByText('NARA-Testkarte')).toBeTruthy();
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /NARA-Testkarte/ }));
+
+    const transcriptInput = screen.getByLabelText('Transkription') as HTMLTextAreaElement;
+    expect(transcriptInput.value).toBe('Raw OCR Schultze Naumburg');
+    await fireEvent.input(transcriptInput, { target: { value: 'Korrigierte Transkription' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Transkription speichern' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Transkription gespeichert.')).toBeTruthy();
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/search/job-1/results/7/transcript',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ transcript_text: 'Korrigierte Transkription' })
+      })
+    );
+    expect((screen.getByLabelText('Transkription') as HTMLTextAreaElement).value).toBe('Korrigierte Transkription');
+    expect(screen.getByText('manuell korrigiert')).toBeTruthy();
   });
 });

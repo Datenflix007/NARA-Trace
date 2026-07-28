@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import asyncio
+import mimetypes
+
 from fastapi import APIRouter, HTTPException, Response, status
+from fastapi.responses import FileResponse
 
 from naratrace import __version__
 from naratrace.api.schemas import (
     ApiKeyTestResponse,
     HealthResponse,
+    NaraApiUsageResponse,
     SearchJobResponse,
     SearchRequest,
     SearchResultResponse,
     SettingsResponse,
     SettingsUpdate,
+    TranscriptUpdate,
 )
 from naratrace.core.config import get_settings
 from naratrace.core.paths import get_local_paths
@@ -21,13 +27,17 @@ from naratrace.core.secrets import (
     set_nara_api_key,
 )
 from naratrace.nara.client import NaraCatalogClient, NaraClientError
+from naratrace.nara.usage import NaraApiUsage, get_nara_api_usage
 from naratrace.processing.jobs import (
     create_search_job,
     delete_search_job,
     delete_search_result,
+    get_candidate_page_image_path,
     get_search_job,
     get_search_results,
     list_search_jobs,
+    run_search_job,
+    update_search_result_transcript,
 )
 
 api_router = APIRouter(prefix="/api")
@@ -61,7 +71,9 @@ async def read_search_history() -> list[SearchJobResponse]:
 
 @api_router.post("/search", response_model=SearchJobResponse, status_code=status.HTTP_201_CREATED)
 async def start_search(payload: SearchRequest) -> SearchJobResponse:
-    return await create_search_job(payload)
+    job = await create_search_job(payload)
+    asyncio.create_task(run_search_job(job.id, payload))
+    return job
 
 
 @api_router.get("/search/{job_id}", response_model=SearchJobResponse)
@@ -102,6 +114,22 @@ async def remove_search_result(job_id: str, result_id: int) -> Response:
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@api_router.patch("/search/{job_id}/results/{result_id}/transcript", response_model=SearchResultResponse)
+async def update_result_transcript(job_id: str, result_id: int, payload: TranscriptUpdate) -> SearchResultResponse:
+    result = update_search_result_transcript(job_id, result_id, payload.transcript_text)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Treffer wurde nicht gefunden.")
+    return result
+
+
+@api_router.get("/pages/{page_id}/image")
+async def read_page_image(page_id: int) -> FileResponse:
+    image_path = get_candidate_page_image_path(page_id)
+    if image_path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Originalseite wurde nicht gefunden.")
+    return FileResponse(image_path, media_type=mimetypes.guess_type(image_path.name)[0])
+
+
 @api_router.patch("/settings", response_model=SettingsResponse)
 async def update_settings(payload: SettingsUpdate) -> SettingsResponse:
     if payload.nara_api_key is not None:
@@ -127,10 +155,16 @@ async def test_nara_key() -> ApiKeyTestResponse:
     try:
         await NaraCatalogClient(api_key=api_key).test_key()
     except NaraClientError as exc:
-        return ApiKeyTestResponse(ok=False, live_tested=True, message=str(exc))
+        return ApiKeyTestResponse(
+            ok=False,
+            live_tested=True,
+            message=str(exc),
+            nara_api_usage=build_usage_response(get_nara_api_usage(api_key)),
+        )
     return ApiKeyTestResponse(
         ok=True,
         live_tested=True,
+        nara_api_usage=build_usage_response(get_nara_api_usage(api_key)),
         message=f"NARA API-Schlüssel ist gültig. Quelle: {source}.",
     )
 
@@ -151,6 +185,7 @@ def build_settings_response() -> SettingsResponse:
     settings = get_settings()
     paths = get_local_paths()
     key_status = get_nara_api_key_status()
+    api_key, _ = get_nara_api_key()
     return SettingsResponse(
         mock_mode=settings.mock_mode,
         data_dir=str(paths.root),
@@ -158,4 +193,16 @@ def build_settings_response() -> SettingsResponse:
         database_path=str(paths.database_file),
         nara_api_key_configured=key_status.configured,
         nara_api_key_source=key_status.source,
+        nara_api_usage=build_usage_response(get_nara_api_usage(api_key)),
+    )
+
+
+def build_usage_response(usage: NaraApiUsage) -> NaraApiUsageResponse:
+    return NaraApiUsageResponse(
+        request_count=usage.request_count,
+        request_limit=usage.request_limit,
+        percent_used=usage.percent_used,
+        period=usage.period,
+        reset_at=usage.reset_at,
+        counted_locally=usage.counted_locally,
     )

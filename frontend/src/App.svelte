@@ -6,13 +6,16 @@
     deleteNaraApiKey,
     fetchHealth,
     fetchSearchHistory,
+    fetchSearchJob,
     fetchSearchResults,
     fetchSettings,
     saveNaraApiKey,
     startSearch,
     testNaraApiKey,
+    updateSearchResultTranscript,
     type ApiKeyTestResponse,
     type HealthResponse,
+    type NaraApiUsageResponse,
     type SearchJobResponse,
     type SearchResultResponse,
     type SettingsResponse
@@ -32,6 +35,7 @@
 
   type DisplayResult = {
     resultId: number | null;
+    jobId: string | null;
     key: string;
     title: string;
     matchScore: number;
@@ -45,8 +49,12 @@
     residencePlace: string;
     portraitUrl: string | null;
     sourcePageUrl: string | null;
+    sourceCatalogUrl: string | null;
     sourcePageLabel: string;
     lines: TranscriptLine[];
+    transcriptText: string;
+    transcriptSource: string;
+    transcriptEdited: boolean;
     evidence: string[];
   };
 
@@ -62,6 +70,7 @@
 
   const routeIds: RouteId[] = [...navItems.map((item) => item.id), 'result-detail'];
   const schultzeNaumburgPhotoUrl = '/demo/schultze-naumburg.png';
+  const SEARCH_STATUS_POLL_MS = 1000;
 
   const demoTranscriptLines: TranscriptLine[] = [
     {
@@ -115,9 +124,12 @@
     }
   ];
 
+  const demoTranscriptText = demoTranscriptLines.map((line) => `${line.label}: ${line.value}`).join('\n');
+
   const demoDisplayResults: DisplayResult[] = sortDisplayResults([
     {
       resultId: null,
+      jobId: null,
       key: 'demo-local-schultze',
       title: 'Lokale Demo-Datei: Paul Schultze-Naumburg, NSDAP-Kartei 1931',
       matchScore: 96,
@@ -131,12 +143,17 @@
       residencePlace: 'Naumburg; später Weimar',
       portraitUrl: schultzeNaumburgPhotoUrl,
       sourcePageUrl: schultzePage2Url,
+      sourceCatalogUrl: null,
       sourcePageLabel: 'SchulzeNaumburg_NSDAP_Kartei1931.pdf, Seite 2',
       lines: demoTranscriptLines,
+      transcriptText: demoTranscriptText,
+      transcriptSource: 'manuelle Demo-Transkription',
+      transcriptEdited: false,
       evidence: ['Name und Mitgliedsnummer passen.', 'Geburtsort Almrich sowie Wohnorte Naumburg und später Weimar stützen den Treffer.', 'Aktenfoto ist in Seite 4 der lokalen PDF enthalten.']
     },
     {
       resultId: null,
+      jobId: null,
       key: 'demo-mock-possible',
       title: 'MOCK-DATENSATZ: ähnliche Schreibweise ohne sichere Lebensdaten',
       matchScore: 58,
@@ -150,12 +167,17 @@
       residencePlace: 'Naumburg ähnlich',
       portraitUrl: null,
       sourcePageUrl: null,
+      sourceCatalogUrl: null,
       sourcePageLabel: 'kein lokales Bild',
       lines: [],
+      transcriptText: '',
+      transcriptSource: 'kein Transkript',
+      transcriptEdited: false,
       evidence: ['Namensähnlichkeit vorhanden.', 'Geburtsdaten fehlen.']
     },
     {
       resultId: null,
+      jobId: null,
       key: 'demo-mock-weak',
       title: 'MOCK-DATENSATZ: widersprüchliche Personendaten',
       matchScore: 34,
@@ -169,8 +191,12 @@
       residencePlace: 'abweichender Ort',
       portraitUrl: null,
       sourcePageUrl: null,
+      sourceCatalogUrl: null,
       sourcePageLabel: 'kein lokales Bild',
       lines: [],
+      transcriptText: '',
+      transcriptSource: 'kein Transkript',
+      transcriptEdited: false,
       evidence: ['Nachname teilweise ähnlich.', 'Geburtsdatum widerspricht dem Suchprofil.']
     }
   ]);
@@ -192,6 +218,10 @@
   let searchNotice = '';
   let searchError = '';
   let searchLoading = false;
+  let searchProgressHint = '';
+  let searchStartedAt: number | null = null;
+  let searchNow = Date.now();
+  let searchTimer: ReturnType<typeof setInterval> | null = null;
   let currentJob: SearchJobResponse | null = null;
   let currentResults: DisplayResult[] = [];
   let historyJobs: SearchJobResponse[] = [];
@@ -212,8 +242,19 @@
   let detailOrigin: DetailOrigin = 'start';
   let hoveredLineId = '';
   let pinnedLineId = '';
+  let transcriptDraft = '';
+  let transcriptDrafts: Record<string, string> = {};
+  let transcriptSaving = false;
+  let transcriptSavingKey = '';
+  let transcriptNotice = '';
+  let transcriptError = '';
+  let transcriptNotices: Record<string, string> = {};
+  let transcriptErrors: Record<string, string> = {};
 
   $: focusedLineId = hoveredLineId || pinnedLineId;
+  $: currentSearchProgressPercent = searchProgressPercent(currentJob);
+  $: currentSearchProgressLabel = searchProgressLabel(currentJob);
+  $: currentSearchSubmitLabel = searchLoading ? (currentJob ? 'Suchjob läuft...' : 'Lege Suchjob an...') : 'Suchjob anlegen';
 
   onMount(() => {
     const syncRoute = () => {
@@ -221,15 +262,16 @@
     };
 
     syncRoute();
-    if (activeRoute === 'settings') {
-      void loadSettings();
-    }
+    void loadSettings();
     if (activeRoute === 'history') {
       void loadHistory();
     }
     window.addEventListener('hashchange', syncRoute);
 
-    return () => window.removeEventListener('hashchange', syncRoute);
+    return () => {
+      stopSearchTimer();
+      window.removeEventListener('hashchange', syncRoute);
+    };
   });
 
   function routeFromHash(hash: string): RouteId {
@@ -253,7 +295,10 @@
   }
 
   function sortDisplayResults(results: DisplayResult[]): DisplayResult[] {
-    return [...results].sort((left, right) => right.matchScore - left.matchScore);
+    return [...results].sort((left, right) => {
+      const displayPriority = Number(Boolean(right.sourcePageUrl)) - Number(Boolean(left.sourcePageUrl));
+      return displayPriority || right.matchScore - left.matchScore;
+    });
   }
 
   function sourceBadgeClass(source: DisplayResult['dataSource']) {
@@ -264,6 +309,140 @@
 
   function scoreLabel(score: number) {
     return `${Math.round(score)} %`;
+  }
+
+  function apiUsageLabel(usage: NaraApiUsageResponse) {
+    return `${formatApiUsagePercent(usage.percent_used)} % (${usage.request_count}/${usage.request_limit})`;
+  }
+
+  function formatApiUsagePercent(value: number) {
+    const digits = value > 0 && value < 10 ? 1 : 0;
+    return new Intl.NumberFormat('de-DE', { maximumFractionDigits: digits }).format(value);
+  }
+
+  function apiUsageTone(usage: NaraApiUsageResponse) {
+    if (usage.percent_used >= 90) return 'danger';
+    if (usage.percent_used >= 70) return 'warning';
+    return 'ok';
+  }
+
+  function terminalJobStatus(status: string) {
+    return status === 'complete' || status === 'failed' || status === 'cancelled';
+  }
+
+  function searchStepLabel(job: SearchJobResponse | null) {
+    const status = job?.status ?? 'queued';
+    const labels: Record<string, string> = {
+      queued: 'Suchlauf wird angelegt',
+      preparing_search: 'Suchprofil, Varianten und Abfrage werden vorbereitet',
+      searching_catalog: 'NARA Catalog wird abgefragt',
+      downloading_pages_ocr: 'Originalseiten werden geladen und OCR wird vorbereitet',
+      ranking: 'Treffer werden bewertet und lokal gespeichert',
+      complete: 'Suche abgeschlossen',
+      failed: 'Suche fehlgeschlagen',
+      cancelled: 'Suche abgebrochen'
+    };
+    return labels[status] ?? status;
+  }
+
+  function searchProgressPercent(job: SearchJobResponse | null) {
+    if (!job || job.progress_total <= 0) return 3;
+    return Math.max(3, Math.min(100, Math.round((job.progress_current / job.progress_total) * 100)));
+  }
+
+  function searchProgressLabel(job: SearchJobResponse | null) {
+    if (!job) return `0 von 6 Schritten (${searchProgressPercent(job)} %)`;
+    if (job.progress_total <= 0) return `${searchProgressPercent(job)} %`;
+    return `${job.progress_current} von ${job.progress_total} Schritten (${searchProgressPercent(job)} %)`;
+  }
+
+  function formatDuration(seconds: number) {
+    const clamped = Math.max(0, Math.round(seconds));
+    const minutes = Math.floor(clamped / 60);
+    const restSeconds = clamped % 60;
+    if (minutes <= 0) return `${restSeconds} s`;
+    return `${minutes} min ${restSeconds.toString().padStart(2, '0')} s`;
+  }
+
+  function searchElapsedSeconds() {
+    if (!searchStartedAt) return 0;
+    return Math.max(0, (searchNow - searchStartedAt) / 1000);
+  }
+
+  function estimatedTotalRuntimeLabel(job: SearchJobResponse | null) {
+    if (!job) {
+      return `ca. ${formatDuration(initialSearchRuntimeEstimate(job))}`;
+    }
+    if (terminalJobStatus(job.status)) {
+      return formatDuration(searchElapsedSeconds());
+    }
+    if (job.progress_current <= 0 || job.progress_total <= 0) {
+      return `ca. ${formatDuration(initialSearchRuntimeEstimate(job))}`;
+    }
+    const fraction = Math.min(0.98, Math.max(0.05, job.progress_current / job.progress_total));
+    return `ca. ${formatDuration(Math.max(searchElapsedSeconds(), searchElapsedSeconds() / fraction))}`;
+  }
+
+  function estimatedRemainingRuntimeLabel(job: SearchJobResponse | null) {
+    if (!job) {
+      return `ca. ${formatDuration(initialSearchRuntimeEstimate(job) - searchElapsedSeconds())}`;
+    }
+    if (terminalJobStatus(job.status)) {
+      return '0 s';
+    }
+    if (job.progress_current <= 0 || job.progress_total <= 0) {
+      return `ca. ${formatDuration(initialSearchRuntimeEstimate(job) - searchElapsedSeconds())}`;
+    }
+    const fraction = Math.min(0.98, Math.max(0.05, job.progress_current / job.progress_total));
+    const total = searchElapsedSeconds() / fraction;
+    return `ca. ${formatDuration(total - searchElapsedSeconds())}`;
+  }
+
+  function initialSearchRuntimeEstimate(job: SearchJobResponse | null) {
+    if (job?.mock_mode) return 8;
+    const candidateBudget = Math.max(1, Math.min(maxCandidates, 100));
+    return 20 + candidateBudget * 0.7;
+  }
+
+  function startSearchTimer() {
+    searchStartedAt = Date.now();
+    searchNow = searchStartedAt;
+    if (searchTimer) {
+      clearInterval(searchTimer);
+    }
+    searchTimer = setInterval(() => {
+      searchNow = Date.now();
+    }, 1000);
+  }
+
+  function stopSearchTimer() {
+    if (searchTimer) {
+      clearInterval(searchTimer);
+      searchTimer = null;
+    }
+  }
+
+  function wait(milliseconds: number) {
+    return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+  }
+
+  async function pollSearchJob(jobId: string) {
+    let latestJob = currentJob;
+    let consecutivePollFailures = 0;
+    while (latestJob && !terminalJobStatus(latestJob.status)) {
+      await wait(SEARCH_STATUS_POLL_MS);
+      try {
+        latestJob = await fetchSearchJob(jobId);
+        currentJob = latestJob;
+        consecutivePollFailures = 0;
+        searchProgressHint = '';
+      } catch {
+        consecutivePollFailures += 1;
+        const attemptLabel = consecutivePollFailures > 1 ? ` (${consecutivePollFailures}. Versuch)` : '';
+        searchProgressHint = `Statusantwort kurz unterbrochen${attemptLabel}. Der Suchjob läuft weiter.`;
+      }
+    }
+    return latestJob;
   }
 
   function initials(name: string) {
@@ -284,8 +463,11 @@
 
   function displayResultFromResponse(result: SearchResultResponse): DisplayResult {
     const isLocal = result.data_source === 'LOCAL' || result.naid.startsWith('LOCAL-');
+    const evidence = result.evidences.map((evidence) => (evidence.detail ? `${evidence.label}: ${evidence.detail}` : evidence.label));
+    const transcriptText = result.transcript_text?.trim() || (isLocal ? demoTranscriptText : evidence.join('\n'));
     return {
       resultId: result.id,
+      jobId: result.job_id,
       key: `${result.job_id}-${result.id}`,
       title: result.title ?? 'Ohne Titel',
       matchScore: result.match_score,
@@ -298,10 +480,16 @@
       birthPlace: result.birth_place || (isLocal ? 'Almrich' : 'nicht ermittelt'),
       residencePlace: isLocal ? 'Naumburg; später Weimar' : 'nicht ermittelt',
       portraitUrl: isLocal ? schultzeNaumburgPhotoUrl : null,
-      sourcePageUrl: isLocal ? schultzePage2Url : null,
-      sourcePageLabel: isLocal ? 'SchulzeNaumburg_NSDAP_Kartei1931.pdf, Seite 2' : 'kein lokales Bild',
+      sourcePageUrl: isLocal ? schultzePage2Url : result.source_page_url,
+      sourceCatalogUrl: isLocal ? null : result.original_url,
+      sourcePageLabel: isLocal
+        ? 'SchulzeNaumburg_NSDAP_Kartei1931.pdf, Seite 2'
+        : result.source_page_label || result.original_url || 'kein lokales Bild',
       lines: isLocal ? demoTranscriptLines : [],
-      evidence: result.evidences.map((evidence) => (evidence.detail ? `${evidence.label}: ${evidence.detail}` : evidence.label))
+      transcriptText,
+      transcriptSource: isLocal ? 'manuelle Demo-Transkription' : result.transcript_source || result.text_origin,
+      transcriptEdited: Boolean(result.transcript_edited),
+      evidence
     };
   }
 
@@ -309,11 +497,87 @@
     return `left: ${line.box.x}%; top: ${line.box.y}%; width: ${line.box.width}%; height: ${line.box.height}%;`;
   }
 
+  function transcriptRowsFor(result: DisplayResult): TranscriptLine[] {
+    if (result.lines.length > 0) {
+      return result.lines;
+    }
+    const rows = [
+      buildTranscriptRow(result, 'name', 'Name', result.name, 'aus Suchprofil oder NARA-Metadaten'),
+      buildTranscriptRow(result, 'birth-date', 'Geburtsdatum', result.birthDate, 'aus NARA-Text, OCR oder Suchprofil'),
+      buildTranscriptRow(result, 'birth-place', 'Geburtsort', result.birthPlace, 'aus NARA-Text, OCR oder Suchprofil'),
+      buildTranscriptRow(result, 'residence', 'Wohnort', result.residencePlace, 'aus NARA-Text, OCR oder Suchprofil')
+    ].filter((line): line is TranscriptLine => Boolean(line));
+    return rows.length > 0
+      ? rows
+      : [buildTranscriptRow(result, 'title', 'Datensatz', result.title, 'NARA-Metadaten') as TranscriptLine];
+  }
+
+  function buildTranscriptRow(
+    result: DisplayResult,
+    id: string,
+    label: string,
+    value: string,
+    note: string
+  ): TranscriptLine | null {
+    const cleaned = value.trim();
+    if (!cleaned || ['nicht ermittelt', 'nicht belegt', 'abweichend'].includes(cleaned.toLowerCase())) {
+      return null;
+    }
+    return {
+      id: `${result.key}-${id}`,
+      label,
+      value: cleaned,
+      note,
+      box: { x: 0, y: 0, width: 0, height: 0 }
+    };
+  }
+
+  function transcriptDraftFor(result: DisplayResult) {
+    return transcriptDrafts[result.key] ?? result.transcriptText;
+  }
+
+  function transcriptNoticeFor(result: DisplayResult) {
+    return transcriptNotices[result.key] ?? '';
+  }
+
+  function transcriptErrorFor(result: DisplayResult) {
+    return transcriptErrors[result.key] ?? '';
+  }
+
+  function isTranscriptSaving(result: DisplayResult) {
+    return transcriptSavingKey === result.key;
+  }
+
+  function updateTranscriptDraft(result: DisplayResult, event: Event) {
+    transcriptDrafts = {
+      ...transcriptDrafts,
+      [result.key]: (event.currentTarget as HTMLTextAreaElement).value
+    };
+  }
+
+  function clearTranscriptMessages(result: DisplayResult) {
+    transcriptNotices = { ...transcriptNotices, [result.key]: '' };
+    transcriptErrors = { ...transcriptErrors, [result.key]: '' };
+  }
+
+  function setTranscriptNotice(result: DisplayResult, message: string) {
+    transcriptNotices = { ...transcriptNotices, [result.key]: message };
+    transcriptErrors = { ...transcriptErrors, [result.key]: '' };
+  }
+
+  function setTranscriptError(result: DisplayResult, message: string) {
+    transcriptErrors = { ...transcriptErrors, [result.key]: message };
+    transcriptNotices = { ...transcriptNotices, [result.key]: '' };
+  }
+
   function openResultDetail(result: DisplayResult, origin: DetailOrigin) {
     detailResult = result;
     detailOrigin = origin;
     hoveredLineId = '';
     pinnedLineId = '';
+    transcriptDraft = result.transcriptText;
+    transcriptNotice = '';
+    transcriptError = '';
     activeRoute = 'result-detail';
     window.location.hash = 'result-detail';
   }
@@ -368,10 +632,12 @@
     searchLoading = true;
     searchNotice = '';
     searchError = '';
+    searchProgressHint = '';
     currentJob = null;
     currentResults = [];
+    startSearchTimer();
     try {
-      currentJob = await startSearch({
+      const startedJob = await startSearch({
         first_name: firstName.trim() || undefined,
         last_name: lastName.trim(),
         variants: variants.trim() || undefined,
@@ -383,14 +649,32 @@
         record_group: recordGroup.trim() || undefined,
         max_candidates: maxCandidates
       });
-      const results = await fetchSearchResults(currentJob.id);
-      currentResults = sortDisplayResults(results.map(displayResultFromResponse));
-      searchNotice = `Suchjob für "${name}" wurde lokal gespeichert. Status: ${currentJob.status}.`;
+      currentJob = startedJob;
+      const finishedJob = terminalJobStatus(startedJob.status) ? startedJob : await pollSearchJob(startedJob.id);
+      if (finishedJob) {
+        currentJob = finishedJob;
+      }
+      if (currentJob && terminalJobStatus(currentJob.status)) {
+        searchProgressHint = '';
+      }
+      await loadSettings();
+      if (currentJob?.status === 'complete') {
+        const results = await fetchSearchResults(startedJob.id);
+        currentResults = sortDisplayResults(results.map(displayResultFromResponse));
+        searchNotice = `Suchjob für "${name}" abgeschlossen. ${currentJob.result_count} Treffer gespeichert.`;
+      } else if (currentJob?.status === 'failed') {
+        searchError = currentJob.error_message ?? 'Der Suchjob konnte nicht abgeschlossen werden.';
+      } else if (currentJob?.status === 'cancelled') {
+        searchNotice = `Suchjob für "${name}" wurde abgebrochen.`;
+      } else {
+        searchNotice = `Suchjob für "${name}" wurde lokal gespeichert. Status: ${currentJob?.status ?? startedJob.status}.`;
+      }
       await loadHistory();
     } catch (error) {
       searchError = error instanceof Error ? error.message : 'Der Suchjob konnte nicht angelegt werden.';
     } finally {
       searchLoading = false;
+      stopSearchTimer();
     }
   }
 
@@ -468,6 +752,72 @@
     }
   }
 
+  async function saveTranscript() {
+    if (!detailResult) {
+      return;
+    }
+    await saveResultTranscript(detailResult, transcriptDraft);
+  }
+
+  async function saveResultTranscript(result: DisplayResult, draftOverride?: string) {
+    const draft = draftOverride ?? transcriptDraftFor(result);
+    if (!result.jobId || result.resultId === null) {
+      const message = 'Diese Beispielansicht kann nicht gespeichert werden.';
+      setTranscriptError(result, message);
+      if (detailResult?.key === result.key) {
+        transcriptError = message;
+        transcriptNotice = '';
+      }
+      return;
+    }
+    if (!draft.trim()) {
+      const message = 'Die Transkription darf nicht leer sein.';
+      setTranscriptError(result, message);
+      if (detailResult?.key === result.key) {
+        transcriptError = message;
+        transcriptNotice = '';
+      }
+      return;
+    }
+    transcriptSaving = true;
+    transcriptSavingKey = result.key;
+    clearTranscriptMessages(result);
+    if (detailResult?.key === result.key) {
+      transcriptError = '';
+      transcriptNotice = '';
+    }
+    try {
+      const updatedResult = await updateSearchResultTranscript(result.jobId, result.resultId, draft);
+      applyUpdatedResult(updatedResult);
+      setTranscriptNotice(result, 'Transkription gespeichert.');
+      if (detailResult?.key === result.key) {
+        transcriptNotice = 'Transkription gespeichert.';
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Die Transkription konnte nicht gespeichert werden.';
+      setTranscriptError(result, message);
+      if (detailResult?.key === result.key) {
+        transcriptError = message;
+      }
+    } finally {
+      transcriptSaving = false;
+      transcriptSavingKey = '';
+    }
+  }
+
+  function applyUpdatedResult(result: SearchResultResponse) {
+    const updated = displayResultFromResponse(result);
+    currentResults = sortDisplayResults(currentResults.map((item) => (item.resultId === updated.resultId ? updated : item)));
+    selectedHistoryResults = sortDisplayResults(
+      selectedHistoryResults.map((item) => (item.resultId === updated.resultId ? updated : item))
+    );
+    transcriptDrafts = { ...transcriptDrafts, [updated.key]: updated.transcriptText };
+    if (detailResult?.resultId === updated.resultId) {
+      detailResult = updated;
+      transcriptDraft = updated.transcriptText;
+    }
+  }
+
   async function loadSettings() {
     settingsLoading = true;
     settingsError = '';
@@ -504,6 +854,7 @@
     try {
       keyTest = await testNaraApiKey();
       settingsNotice = keyTest.message;
+      await loadSettings();
     } catch (error) {
       settingsError = error instanceof Error ? error.message : 'Der NARA API-Schlüssel konnte nicht getestet werden.';
     }
@@ -530,6 +881,11 @@
   <div class="source">
     <span>Datenquelle: U.S. National Archives and Records Administration - National Archives Catalog</span>
     <span class="badge">NARA Catalog</span>
+    {#if settings?.nara_api_key_configured}
+      <span class={`quota-badge ${apiUsageTone(settings.nara_api_usage)}`}>
+        NARA API: {apiUsageLabel(settings.nara_api_usage)}
+      </span>
+    {/if}
   </div>
 </header>
 
@@ -616,7 +972,7 @@
       {/if}
     </section>
   {:else if activeRoute === 'search'}
-    <section class="page">
+    <section class="page search-page">
       <h1>Neue Suche</h1>
       <p>
         Je mehr unabhängige Angaben vorhanden sind, desto besser kann NARATrace mögliche Treffer bewerten.
@@ -679,25 +1035,100 @@
           </label>
         </fieldset>
         <button class="button" type="submit" disabled={searchLoading}>
-          {searchLoading ? 'Lege Suchjob an...' : 'Suchjob anlegen'}
+          {currentSearchSubmitLabel}
         </button>
       </form>
+      {#if searchLoading}
+        <div class="search-progress-overlay" role="status" aria-live="polite">
+          <section class="search-progress-panel" aria-label="Suchfortschritt">
+            <div class="progress-summary">
+              <span>Aktueller Schritt</span>
+              <strong>{searchStepLabel(currentJob)}</strong>
+            </div>
+            <div
+              class="progress-bar"
+              role="progressbar"
+              aria-label="Fortschritt des Suchjobs"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow={currentSearchProgressPercent}
+            >
+              <span style={`width: ${currentSearchProgressPercent}%;`}></span>
+            </div>
+            <div class="progress-stats">
+              <span>
+                <strong>{currentSearchProgressLabel}</strong>
+                <small>Aktueller Fortschritt</small>
+              </span>
+              <span>
+                <strong>{estimatedTotalRuntimeLabel(currentJob)}</strong>
+                <small>Voraussichtliche Laufzeit</small>
+              </span>
+              <span>
+                <strong>{estimatedRemainingRuntimeLabel(currentJob)}</strong>
+                <small>Restzeit</small>
+              </span>
+              <span>
+                <strong>{formatDuration(searchElapsedSeconds())}</strong>
+                <small>Suchlaufzeit</small>
+              </span>
+            </div>
+            {#if searchProgressHint}
+              <p class="progress-hint">{searchProgressHint}</p>
+            {/if}
+          </section>
+        </div>
+      {/if}
       {#if searchNotice}
         <p class="notice">{searchNotice}</p>
       {/if}
       {#if searchError}
         <p class="error">{searchError}</p>
       {/if}
-      {#if currentJob}
+      {#if currentJob && !searchLoading}
         <section class="status-panel" aria-label="Suchjob-Status">
-          <h2>Suchjob gespeichert</h2>
+          <h2>{terminalJobStatus(currentJob.status) ? 'Suchjob gespeichert' : 'Suchjob läuft'}</h2>
+          <div class="progress-tracker" aria-live="polite">
+            <div class="progress-summary">
+              <span>Aktueller Schritt</span>
+              <strong>{searchStepLabel(currentJob)}</strong>
+            </div>
+            <div
+              class="progress-bar"
+              role="progressbar"
+              aria-label="Fortschritt des Suchjobs"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow={currentSearchProgressPercent}
+            >
+              <span style={`width: ${currentSearchProgressPercent}%;`}></span>
+            </div>
+            <div class="progress-stats">
+              <span>
+                <strong>{currentSearchProgressPercent} %</strong>
+                <small>Fortschritt</small>
+              </span>
+              <span>
+                <strong>{estimatedRemainingRuntimeLabel(currentJob)}</strong>
+                <small>Restzeit</small>
+              </span>
+              <span>
+                <strong>{estimatedTotalRuntimeLabel(currentJob)}</strong>
+                <small>Erwartete Gesamtzeit</small>
+              </span>
+              <span>
+                <strong>{formatDuration(searchElapsedSeconds())}</strong>
+                <small>Bisherige Laufzeit</small>
+              </span>
+            </div>
+          </div>
           <dl>
             <dt>Job-ID</dt>
             <dd>{currentJob.id}</dd>
             <dt>Status</dt>
             <dd>{currentJob.status}</dd>
             <dt>Fortschritt</dt>
-            <dd>{currentJob.progress_current} von {currentJob.progress_total}</dd>
+            <dd>{currentSearchProgressLabel}</dd>
             <dt>Treffer</dt>
             <dd>{currentJob.result_count}</dd>
             <dt>Mock-Modus</dt>
@@ -722,30 +1153,150 @@
             <span class="eyebrow">Treffer</span>
             <h2>Nach Trefferwahrscheinlichkeit</h2>
           </div>
-          <div class="ranked-list">
+          <div class="result-card-list">
             {#each currentResults as result}
-              <button class="match-row" type="button" onclick={() => openResultDetail(result, 'search')}>
-                <span class="portrait-frame">
-                  {#if result.portraitUrl}
-                    <img src={result.portraitUrl} alt={`Aktenfoto ${result.name}`} />
-                  {:else}
-                    <span class="portrait-placeholder">{initials(result.name)}</span>
-                  {/if}
-                </span>
-                <span class="match-summary">
-                  <span class="match-topline">
+              <article class="result-card" aria-label={`Treffer ${result.name}`}>
+                <div class="result-card-header">
+                  <div>
+                    <div class="match-topline">
                     <span class={`source-badge ${sourceBadgeClass(result.dataSource)}`}>{result.dataSource}</span>
                     <span class="score-pill">{scoreLabel(result.matchScore)}</span>
-                  </span>
-                  <span class="match-name">{result.name}</span>
-                  <span class="match-record">{result.naid}</span>
-                  <span class="match-title">{result.title}</span>
-                  <span class="match-facts">
-                    <span>Geburtsdatum: {result.birthDate}</span>
-                    <span>Wohnort: {result.residencePlace}</span>
-                  </span>
-                </span>
-              </button>
+                    </div>
+                    <h3>{result.name}</h3>
+                    <p>{result.category} · Trefferwahrscheinlichkeit {scoreLabel(result.matchScore)} · {result.naid}</p>
+                  </div>
+                  <button class="button secondary" type="button" onclick={() => openResultDetail(result, 'search')}>
+                    Vollansicht öffnen
+                  </button>
+                </div>
+
+                <div class="detail-shell inline-detail-shell">
+                  <section class="original-pane" aria-label={`Originalseite ${result.name}`}>
+                    <div class="section-heading">
+                      <span class="eyebrow">Originalseite</span>
+                      <h2>{result.sourcePageLabel}</h2>
+                    </div>
+                    {#if result.sourcePageUrl}
+                      <div class="document-stage">
+                        <img src={result.sourcePageUrl} alt={result.sourcePageLabel} />
+                        {#each result.lines as line}
+                          <button
+                            class="document-hotspot"
+                            class:active={focusedLineId === line.id}
+                            style={hotspotStyle(line)}
+                            type="button"
+                            aria-label={line.label}
+                            onmouseenter={() => setHoveredLine(line.id)}
+                            onmouseleave={clearHoveredLine}
+                            onfocus={() => setHoveredLine(line.id)}
+                            onblur={clearHoveredLine}
+                            onclick={() => togglePinnedLine(line.id)}
+                          >
+                            <span>{line.label}</span>
+                          </button>
+                        {/each}
+                      </div>
+                    {:else if result.sourceCatalogUrl}
+                      <div class="catalog-preview">
+                        <iframe title={`NARA Catalog Datensatz ${result.naid}`} src={result.sourceCatalogUrl}></iframe>
+                        <div class="catalog-preview-link">
+                          <a class="button secondary" href={result.sourceCatalogUrl} target="_blank" rel="noreferrer">
+                            NARA-Datensatz öffnen
+                          </a>
+                        </div>
+                      </div>
+                    {:else}
+                      <div class="empty-state compact-empty">
+                        <h2>Kein lokales Originalbild</h2>
+                        <p>Für diesen Treffer ist noch keine Bildseite im lokalen Cache vorhanden.</p>
+                      </div>
+                    {/if}
+                  </section>
+
+                  <section class="transcript-pane" aria-label={`Transkript ${result.name}`}>
+                    <div class="section-heading">
+                      <span class="eyebrow">Transkript</span>
+                      <h2>Personendaten</h2>
+                    </div>
+                    <div class="identity-grid">
+                      <span>
+                        <strong>Name</strong>
+                        {result.name}
+                      </span>
+                      <span>
+                        <strong>Geburtsdatum</strong>
+                        {result.birthDate}
+                      </span>
+                      <span>
+                        <strong>Geburtsort</strong>
+                        {result.birthPlace}
+                      </span>
+                      <span>
+                        <strong>Wohnort</strong>
+                        {result.residencePlace}
+                      </span>
+                    </div>
+                    <div class="transcript-lines">
+                      {#each transcriptRowsFor(result) as line}
+                        <button
+                          class="transcript-line"
+                          class:active={focusedLineId === line.id}
+                          type="button"
+                          onmouseenter={() => setHoveredLine(line.id)}
+                          onmouseleave={clearHoveredLine}
+                          onfocus={() => setHoveredLine(line.id)}
+                          onblur={clearHoveredLine}
+                          onclick={() => togglePinnedLine(line.id)}
+                        >
+                          <span>{line.label}</span>
+                          <strong>{line.value}</strong>
+                          <small>{line.note}</small>
+                        </button>
+                      {/each}
+                    </div>
+                    <div class="transcript-editor-panel">
+                      <div class="transcript-meta">
+                        <span>{result.transcriptSource}</span>
+                        {#if result.transcriptEdited}
+                          <span>manuell korrigiert</span>
+                        {/if}
+                      </div>
+                      <label>
+                        Transkription
+                        <textarea
+                          class="transcript-editor"
+                          value={transcriptDraftFor(result)}
+                          rows="16"
+                          oninput={(event) => updateTranscriptDraft(result, event)}
+                        ></textarea>
+                      </label>
+                      <div class="actions">
+                        <button
+                          class="button"
+                          type="button"
+                          onclick={() => saveResultTranscript(result)}
+                          disabled={isTranscriptSaving(result) || result.resultId === null}
+                        >
+                          {isTranscriptSaving(result) ? 'Speichere...' : 'Transkription speichern'}
+                        </button>
+                      </div>
+                      {#if transcriptNoticeFor(result)}
+                        <p class="notice compact-message">{transcriptNoticeFor(result)}</p>
+                      {/if}
+                      {#if transcriptErrorFor(result)}
+                        <p class="error compact-message">{transcriptErrorFor(result)}</p>
+                      {/if}
+                    </div>
+                    {#if result.evidence.length > 0}
+                      <div class="evidence-list">
+                        {#each result.evidence as evidence}
+                          <p>{evidence}</p>
+                        {/each}
+                      </div>
+                    {/if}
+                  </section>
+                </div>
+              </article>
             {/each}
           </div>
         </section>
@@ -824,9 +1375,149 @@
             {#if historyResultsLoading}
               <p class="muted">Lade Treffer...</p>
             {:else if selectedHistoryResults.length > 0}
-              <div class="ranked-list">
+              <div class="result-card-list">
                 {#each selectedHistoryResults as result}
-                  <article class="result-entry">
+                  <article class="result-card" aria-label={`Treffer ${result.name}`}>
+                    <div class="result-card-header">
+                      <div>
+                        <div class="match-topline">
+                          <span class={`source-badge ${sourceBadgeClass(result.dataSource)}`}>{result.dataSource}</span>
+                          <span class="score-pill">{scoreLabel(result.matchScore)}</span>
+                        </div>
+                        <h3>{result.name}</h3>
+                        <p>{result.category} · Trefferwahrscheinlichkeit {scoreLabel(result.matchScore)} · {result.naid}</p>
+                      </div>
+                      <button class="button secondary" type="button" onclick={() => openResultDetail(result, 'history')}>
+                        Vollansicht öffnen
+                      </button>
+                    </div>
+
+                    <div class="detail-shell inline-detail-shell">
+                      <section class="original-pane" aria-label={`Originalseite ${result.name}`}>
+                        <div class="section-heading">
+                          <span class="eyebrow">Originalseite</span>
+                          <h2>{result.sourcePageLabel}</h2>
+                        </div>
+                        {#if result.sourcePageUrl}
+                          <div class="document-stage">
+                            <img src={result.sourcePageUrl} alt={result.sourcePageLabel} />
+                            {#each result.lines as line}
+                              <button
+                                class="document-hotspot"
+                                class:active={focusedLineId === line.id}
+                                style={hotspotStyle(line)}
+                                type="button"
+                                aria-label={line.label}
+                                onmouseenter={() => setHoveredLine(line.id)}
+                                onmouseleave={clearHoveredLine}
+                                onfocus={() => setHoveredLine(line.id)}
+                                onblur={clearHoveredLine}
+                                onclick={() => togglePinnedLine(line.id)}
+                              >
+                                <span>{line.label}</span>
+                              </button>
+                            {/each}
+                          </div>
+                        {:else if result.sourceCatalogUrl}
+                          <div class="catalog-preview">
+                            <iframe title={`NARA Catalog Datensatz ${result.naid}`} src={result.sourceCatalogUrl}></iframe>
+                            <div class="catalog-preview-link">
+                              <a class="button secondary" href={result.sourceCatalogUrl} target="_blank" rel="noreferrer">
+                                NARA-Datensatz öffnen
+                              </a>
+                            </div>
+                          </div>
+                        {:else}
+                          <div class="empty-state compact-empty">
+                            <h2>Kein lokales Originalbild</h2>
+                            <p>Für diesen Treffer ist noch keine Bildseite im lokalen Cache vorhanden.</p>
+                          </div>
+                        {/if}
+                      </section>
+
+                      <section class="transcript-pane" aria-label={`Transkript ${result.name}`}>
+                        <div class="section-heading">
+                          <span class="eyebrow">Transkript</span>
+                          <h2>Personendaten</h2>
+                        </div>
+                        <div class="identity-grid">
+                          <span>
+                            <strong>Name</strong>
+                            {result.name}
+                          </span>
+                          <span>
+                            <strong>Geburtsdatum</strong>
+                            {result.birthDate}
+                          </span>
+                          <span>
+                            <strong>Geburtsort</strong>
+                            {result.birthPlace}
+                          </span>
+                          <span>
+                            <strong>Wohnort</strong>
+                            {result.residencePlace}
+                          </span>
+                        </div>
+                        <div class="transcript-lines">
+                          {#each transcriptRowsFor(result) as line}
+                            <button
+                              class="transcript-line"
+                              class:active={focusedLineId === line.id}
+                              type="button"
+                              onmouseenter={() => setHoveredLine(line.id)}
+                              onmouseleave={clearHoveredLine}
+                              onfocus={() => setHoveredLine(line.id)}
+                              onblur={clearHoveredLine}
+                              onclick={() => togglePinnedLine(line.id)}
+                            >
+                              <span>{line.label}</span>
+                              <strong>{line.value}</strong>
+                              <small>{line.note}</small>
+                            </button>
+                          {/each}
+                        </div>
+                        <div class="transcript-editor-panel">
+                          <div class="transcript-meta">
+                            <span>{result.transcriptSource}</span>
+                            {#if result.transcriptEdited}
+                              <span>manuell korrigiert</span>
+                            {/if}
+                          </div>
+                          <label>
+                            Transkription
+                            <textarea
+                              class="transcript-editor"
+                              value={transcriptDraftFor(result)}
+                              rows="16"
+                              oninput={(event) => updateTranscriptDraft(result, event)}
+                            ></textarea>
+                          </label>
+                          <div class="actions">
+                            <button
+                              class="button"
+                              type="button"
+                              onclick={() => saveResultTranscript(result)}
+                              disabled={isTranscriptSaving(result) || result.resultId === null}
+                            >
+                              {isTranscriptSaving(result) ? 'Speichere...' : 'Transkription speichern'}
+                            </button>
+                          </div>
+                          {#if transcriptNoticeFor(result)}
+                            <p class="notice compact-message">{transcriptNoticeFor(result)}</p>
+                          {/if}
+                          {#if transcriptErrorFor(result)}
+                            <p class="error compact-message">{transcriptErrorFor(result)}</p>
+                          {/if}
+                        </div>
+                        {#if result.evidence.length > 0}
+                          <div class="evidence-list">
+                            {#each result.evidence as evidence}
+                              <p>{evidence}</p>
+                            {/each}
+                          </div>
+                        {/if}
+                      </section>
+                    </div>
                     <button
                       class="match-row"
                       type="button"
@@ -917,6 +1608,15 @@
                 </button>
               {/each}
             </div>
+          {:else if detailResult.sourceCatalogUrl}
+            <div class="catalog-preview">
+              <iframe title={`NARA Catalog Datensatz ${detailResult.naid}`} src={detailResult.sourceCatalogUrl}></iframe>
+              <div class="catalog-preview-link">
+                <a class="button secondary" href={detailResult.sourceCatalogUrl} target="_blank" rel="noreferrer">
+                  NARA-Datensatz öffnen
+                </a>
+              </div>
+            </div>
           {:else}
             <div class="empty-state compact-empty">
               <h2>Kein lokales Originalbild</h2>
@@ -968,8 +1668,39 @@
                 </button>
               {/each}
             </div>
-          {:else}
-            <div class="transcript-lines">
+          {/if}
+
+          <div class="transcript-editor-panel">
+            <div class="transcript-meta">
+              <span>{detailResult.transcriptSource}</span>
+              {#if detailResult.transcriptEdited}
+                <span>manuell korrigiert</span>
+              {/if}
+            </div>
+            <label>
+              Transkription
+              <textarea class="transcript-editor" bind:value={transcriptDraft} rows="16"></textarea>
+            </label>
+            <div class="actions">
+              <button
+                class="button"
+                type="button"
+                onclick={saveTranscript}
+                disabled={transcriptSaving || detailResult.resultId === null}
+              >
+                {transcriptSaving ? 'Speichere...' : 'Transkription speichern'}
+              </button>
+            </div>
+            {#if transcriptNotice}
+              <p class="notice compact-message">{transcriptNotice}</p>
+            {/if}
+            {#if transcriptError}
+              <p class="error compact-message">{transcriptError}</p>
+            {/if}
+          </div>
+
+          {#if detailResult.lines.length === 0 && detailResult.evidence.length > 0}
+            <div class="evidence-list">
               {#each detailResult.evidence as evidence}
                 <p>{evidence}</p>
               {/each}

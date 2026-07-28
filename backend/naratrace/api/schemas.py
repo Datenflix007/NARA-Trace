@@ -17,6 +17,15 @@ class HealthResponse(BaseModel):
     database_path: str
 
 
+class NaraApiUsageResponse(BaseModel):
+    request_count: int
+    request_limit: int
+    percent_used: float
+    period: str
+    reset_at: datetime
+    counted_locally: bool
+
+
 class SettingsResponse(BaseModel):
     mock_mode: bool
     data_dir: str
@@ -24,6 +33,7 @@ class SettingsResponse(BaseModel):
     database_path: str
     nara_api_key_configured: bool
     nara_api_key_source: Literal["keyring", "environment", "none"]
+    nara_api_usage: NaraApiUsageResponse
 
 
 class SettingsUpdate(BaseModel):
@@ -37,6 +47,7 @@ class ApiKeyTestResponse(BaseModel):
     ok: bool
     live_tested: bool
     message: str
+    nara_api_usage: NaraApiUsageResponse | None = None
 
 
 class SearchRequest(BaseModel):
@@ -93,4 +104,14 @@ class SearchResultResponse(BaseModel):
     text_origin: str
     data_source: Literal["NARA", "MOCK", "LOCAL"]
     retrieved_at: datetime | None
+    source_page_id: int | None = None
+    source_page_url: str | None = None
+    source_page_label: str | None = None
+    transcript_text: str | None = None
+    transcript_source: str | None = None
+    transcript_edited: bool = False
     evidences: list[MatchEvidenceResponse]
+
+
+class TranscriptUpdate(BaseModel):
+    transcript_text: str = Field(min_length=1)

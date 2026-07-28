@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 from sqlalchemy import select
@@ -11,6 +13,7 @@ from naratrace.database.models import SearchField, SearchVariant
 from naratrace.database.session import session_scope
 from naratrace.main import create_app
 from naratrace.nara.client import NaraRecord, NaraSearchItem, NaraSearchResponse
+from naratrace.processing.documents import MaterializedPage
 from naratrace.processing.jobs import build_nara_query
 
 
@@ -45,6 +48,18 @@ def isolate_nara_key(monkeypatch, tmp_path, api_key: str | None = None) -> None:
     reset_settings_cache()
 
 
+async def wait_for_terminal_job(client: httpx.AsyncClient, job_id: str) -> dict:
+    job = None
+    for _ in range(60):
+        response = await client.get(f"/api/search/{job_id}")
+        assert response.status_code == 200
+        job = response.json()
+        if job["status"] in {"complete", "failed", "cancelled"}:
+            return job
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"Suchjob {job_id} wurde nicht fertig. Letzter Status: {job}")
+
+
 @pytest.mark.asyncio
 async def test_create_search_job_without_mock_does_not_invent_results(tmp_path, monkeypatch):
     isolate_nara_key(monkeypatch, tmp_path)
@@ -71,6 +86,8 @@ async def test_create_search_job_without_mock_does_not_invent_results(tmp_path, 
             )
             assert create_response.status_code == 201
             job = create_response.json()
+            assert job["status"] == "queued"
+            job = await wait_for_terminal_job(client, job["id"])
             assert job["status"] == "failed"
             assert job["result_count"] == 0
             assert job["mock_mode"] is False
@@ -113,6 +130,8 @@ async def test_create_search_job_with_mock_returns_labeled_mock_results(tmp_path
             )
             assert create_response.status_code == 201
             job = create_response.json()
+            assert job["status"] == "queued"
+            job = await wait_for_terminal_job(client, job["id"])
             assert job["status"] == "complete"
             assert job["result_count"] == 4
             assert job["mock_mode"] is True
@@ -160,6 +179,8 @@ async def test_create_search_job_with_demo_mode_returns_mock_results_without_api
             )
             assert create_response.status_code == 201
             job = create_response.json()
+            assert job["status"] == "queued"
+            job = await wait_for_terminal_job(client, job["id"])
             assert job["status"] == "complete"
             assert job["result_count"] == 4
             assert job["mock_mode"] is True
@@ -194,6 +215,7 @@ async def test_delete_search_result_and_search_job(tmp_path, monkeypatch):
                 },
             )
             job = create_response.json()
+            job = await wait_for_terminal_job(client, job["id"])
             results_response = await client.get(f"/api/search/{job['id']}/results")
             results = results_response.json()
             assert len(results) == 4
@@ -238,6 +260,19 @@ async def test_create_search_job_with_api_key_stores_real_nara_candidates(tmp_pa
 
     monkeypatch.setattr("naratrace.processing.jobs.run_nara_candidate_search", fake_run_nara_candidate_search)
 
+    async def fake_materialize_best_page(job_id, naid, record, payload):
+        return MaterializedPage(
+            object_data=record.digitalObjects[0],
+            page_number=1,
+            image_url="https://catalog.archives.gov/object/mock.jpg",
+            local_path=None,
+            nara_text="Paul Schultze-Naumburg 1869 Naumburg 347541",
+            ocr_text=None,
+            ocr_engine=None,
+        )
+
+    monkeypatch.setattr("naratrace.processing.jobs.materialize_best_page", fake_materialize_best_page)
+
     app = create_app()
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
@@ -255,6 +290,8 @@ async def test_create_search_job_with_api_key_stores_real_nara_candidates(tmp_pa
             )
             assert create_response.status_code == 201
             job = create_response.json()
+            assert job["status"] == "queued"
+            job = await wait_for_terminal_job(client, job["id"])
             assert job["status"] == "complete"
             assert job["result_count"] == 1
 
@@ -265,3 +302,79 @@ async def test_create_search_job_with_api_key_stores_real_nara_candidates(tmp_pa
             assert results[0]["naid"] == "123456"
             assert results[0]["record_group"] == "Record Group 242"
             assert results[0]["match_score"] >= 80
+            assert results[0]["source_page_url"] == "https://catalog.archives.gov/object/mock.jpg"
+            assert results[0]["transcript_text"] == "Paul Schultze-Naumburg 1869 Naumburg 347541"
+            assert results[0]["transcript_source"] == "NARA Extracted Text"
+
+
+@pytest.mark.asyncio
+async def test_update_search_result_transcript_persists_manual_correction(tmp_path, monkeypatch):
+    isolate_nara_key(monkeypatch, tmp_path, api_key="test-key")
+    monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
+    reset_settings_cache()
+    reset_paths_cache()
+
+    async def fake_run_nara_candidate_search(payload, api_key):
+        return NaraSearchResponse(
+            total=1,
+            raw={"mocked": True},
+            items=[
+                NaraSearchItem(
+                    record=NaraRecord(
+                        naId=987654,
+                        title="Membership card",
+                        digitalObjects=[
+                            {
+                                "objectId": "obj-1",
+                                "objectUrl": "https://catalog.archives.gov/object/card.jpg",
+                                "objectFilename": "card.jpg",
+                                "extractedText": "Raw OCR Schultze Naumburg",
+                            }
+                        ],
+                    ),
+                    raw={"_source": {"record": {"naId": 987654}}},
+                )
+            ],
+        )
+
+    async def fake_materialize_best_page(job_id, naid, record, payload):
+        return MaterializedPage(
+            object_data=record.digitalObjects[0],
+            page_number=1,
+            image_url="https://catalog.archives.gov/object/card.jpg",
+            local_path=None,
+            nara_text="Raw OCR Schultze Naumburg",
+            ocr_text=None,
+            ocr_engine=None,
+        )
+
+    monkeypatch.setattr("naratrace.processing.jobs.run_nara_candidate_search", fake_run_nara_candidate_search)
+    monkeypatch.setattr("naratrace.processing.jobs.materialize_best_page", fake_materialize_best_page)
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            create_response = await client.post(
+                "/api/search",
+                json={"first_name": "Paul", "last_name": "Schultze-Naumburg", "max_candidates": 10},
+            )
+            job = create_response.json()
+            job = await wait_for_terminal_job(client, job["id"])
+            result = (await client.get(f"/api/search/{job['id']}/results")).json()[0]
+
+            update_response = await client.patch(
+                f"/api/search/{job['id']}/results/{result['id']}/transcript",
+                json={"transcript_text": "Korrigierte Transkription"},
+            )
+
+            assert update_response.status_code == 200
+            updated = update_response.json()
+            assert updated["transcript_text"] == "Korrigierte Transkription"
+            assert updated["transcript_source"] == "manuelle Korrektur"
+            assert updated["transcript_edited"] is True
+
+            reloaded = (await client.get(f"/api/search/{job['id']}/results")).json()[0]
+            assert reloaded["transcript_text"] == "Korrigierte Transkription"
+            assert reloaded["transcript_edited"] is True
