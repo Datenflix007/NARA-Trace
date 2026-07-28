@@ -278,6 +278,59 @@ describe('App', () => {
     );
   });
 
+  it('beendet die Live-Ladeanzeige deterministisch bei dauerhaft unterbrochenem Status', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/settings') {
+        return new Response(JSON.stringify(settingsResponse()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (url === '/api/search' && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify(
+            searchJob({
+              id: 'job-stalled',
+              status: 'downloading_pages_ocr',
+              progress_current: 4,
+              progress_total: 6,
+              result_count: 0,
+              completed_at: null
+            })
+          ),
+          { status: 201, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url === '/api/search/job-stalled') {
+        return new Response(JSON.stringify({ detail: 'Status nicht erreichbar' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    render(App);
+
+    await fireEvent.click(screen.getByRole('link', { name: 'Neue Suche' }));
+    await fireEvent.input(screen.getByLabelText('Nachname'), { target: { value: 'Schultze-Naumburg' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Suchjob anlegen' }));
+
+    await waitFor(
+      () => {
+        expect(
+          screen.getByText(
+            'Der Suchjob-Status konnte nach mehreren Versuchen nicht aktualisiert werden. Der Suchjob läuft möglicherweise im Hintergrund weiter. Öffne den Suchverlauf später erneut.'
+          )
+        ).toBeTruthy();
+      },
+      { timeout: 7000 }
+    );
+    expect(screen.queryByLabelText('Suchfortschritt')).toBeNull();
+    expect(screen.getByText('4 von 6 Schritten (67 %)')).toBeTruthy();
+  });
+
   it('zeigt Treffer einer neuen Suche direkt als Original-und-Transkript-Karte', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = String(input);

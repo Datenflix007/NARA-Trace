@@ -71,6 +71,7 @@
   const routeIds: RouteId[] = [...navItems.map((item) => item.id), 'result-detail'];
   const schultzeNaumburgPhotoUrl = '/demo/schultze-naumburg.png';
   const SEARCH_STATUS_POLL_MS = 1000;
+  const SEARCH_STATUS_MAX_POLL_FAILURES = 5;
 
   const demoTranscriptLines: TranscriptLine[] = [
     {
@@ -438,6 +439,12 @@
         searchProgressHint = '';
       } catch {
         consecutivePollFailures += 1;
+        if (consecutivePollFailures >= SEARCH_STATUS_MAX_POLL_FAILURES) {
+          searchProgressHint = '';
+          throw new Error(
+            'Der Suchjob-Status konnte nach mehreren Versuchen nicht aktualisiert werden. Der Suchjob läuft möglicherweise im Hintergrund weiter. Öffne den Suchverlauf später erneut.'
+          );
+        }
         const attemptLabel = consecutivePollFailures > 1 ? ` (${consecutivePollFailures}. Versuch)` : '';
         searchProgressHint = `Statusantwort kurz unterbrochen${attemptLabel}. Der Suchjob läuft weiter.`;
       }
