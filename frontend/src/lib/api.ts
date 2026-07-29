@@ -36,6 +36,10 @@ export type SearchJobResponse = {
   completed_at: string | null;
   result_count: number;
   mock_mode: boolean;
+  preview_title?: string | null;
+  preview_subtitle?: string | null;
+  preview_media_url?: string | null;
+  preview_media_type?: 'image' | 'video' | 'catalog' | 'unknown' | null;
 };
 
 export type LocalDocumentResponse = {
@@ -56,6 +60,20 @@ export type MatchEvidenceResponse = {
   detail: string | null;
   score_delta: number;
   source_type: string | null;
+};
+
+export type ResultMediaPageResponse = {
+  page_id: number;
+  page_number: number;
+  label: string;
+  media_url: string | null;
+  media_type: 'image' | 'video' | 'catalog' | 'unknown';
+  original_url: string | null;
+  thumbnail_url: string | null;
+  mime_type: string | null;
+  transcript_text: string | null;
+  transcript_source: string | null;
+  transcript_edited: boolean;
 };
 
 export type SearchResultResponse = {
@@ -81,6 +99,8 @@ export type SearchResultResponse = {
   transcript_text: string | null;
   transcript_source: string | null;
   transcript_edited: boolean;
+  media_pages?: ResultMediaPageResponse[];
+  record_years?: number[];
   evidences: MatchEvidenceResponse[];
 };
 

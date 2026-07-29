@@ -37,6 +37,7 @@ from naratrace.processing.jobs import (
     delete_search_job,
     delete_search_result,
     get_candidate_page_image_path,
+    get_candidate_page_media_path,
     get_search_job,
     get_search_results,
     list_search_jobs,
@@ -181,6 +182,14 @@ async def read_page_image(page_id: int) -> FileResponse:
     if image_path is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Originalseite wurde nicht gefunden.")
     return FileResponse(image_path, media_type=mimetypes.guess_type(image_path.name)[0])
+
+
+@api_router.get("/pages/{page_id}/media")
+async def read_page_media(page_id: int) -> FileResponse:
+    media_path = get_candidate_page_media_path(page_id)
+    if media_path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Originalmedium wurde nicht gefunden.")
+    return FileResponse(media_path, media_type=mimetypes.guess_type(media_path.name)[0])
 
 
 @api_router.patch("/settings", response_model=SettingsResponse)

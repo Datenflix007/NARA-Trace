@@ -14,7 +14,7 @@ from naratrace.database.session import session_scope
 from naratrace.main import create_app
 from naratrace.nara.client import NaraRecord, NaraSearchItem, NaraSearchResponse
 from naratrace.processing.documents import MaterializedPage
-from naratrace.processing.jobs import build_nara_query
+from naratrace.processing.jobs import build_nara_query, run_nara_candidate_search
 
 
 def test_nara_query_rewrites_hyphenated_terms_for_boolean_search():
@@ -36,6 +36,41 @@ def test_nara_query_rewrites_hyphenated_terms_for_boolean_search():
     assert "347541" in query
     assert " OR " in query
     assert len(query) <= 1024
+
+
+@pytest.mark.asyncio
+async def test_nara_candidate_search_paginates_above_single_request(monkeypatch):
+    calls: list[dict] = []
+
+    class FakeNaraCatalogClient:
+        def __init__(self, api_key: str):
+            self.api_key = api_key
+
+        async def search_records(self, params: dict):
+            calls.append(dict(params))
+            page = int(params["page"])
+            limit = int(params["limit"])
+            offset = (page - 1) * 100
+            return NaraSearchResponse(
+                total=250,
+                raw={"page": page},
+                items=[
+                    NaraSearchItem(
+                        record=NaraRecord(naId=offset + index + 1, title=f"Adolf Hitler record {offset + index + 1}"),
+                        raw={"page": page, "index": index},
+                    )
+                    for index in range(limit)
+                ],
+            )
+
+    monkeypatch.setattr("naratrace.processing.jobs.NaraCatalogClient", FakeNaraCatalogClient)
+
+    response = await run_nara_candidate_search(SearchRequest(last_name="Hitler", max_candidates=250), "test-key")
+
+    assert [call["page"] for call in calls] == [1, 2, 3]
+    assert [call["limit"] for call in calls] == [100, 100, 50]
+    assert len(response.items) == 250
+    assert response.raw["page_count"] == 3
 
 
 def isolate_nara_key(monkeypatch, tmp_path, api_key: str | None = None) -> None:
@@ -296,18 +331,20 @@ async def test_create_search_job_with_api_key_stores_real_nara_candidates(tmp_pa
 
     monkeypatch.setattr("naratrace.processing.jobs.run_nara_candidate_search", fake_run_nara_candidate_search)
 
-    async def fake_materialize_best_page(job_id, naid, record, payload):
-        return MaterializedPage(
-            object_data=record.digitalObjects[0],
-            page_number=1,
-            image_url="https://catalog.archives.gov/object/mock.jpg",
-            local_path=None,
-            nara_text="Paul Schultze-Naumburg 1869 Naumburg 347541",
-            ocr_text=None,
-            ocr_engine=None,
-        )
+    async def fake_materialize_relevant_pages(job_id, naid, record, payload):
+        return [
+            MaterializedPage(
+                object_data=record.digitalObjects[0],
+                page_number=1,
+                image_url="https://catalog.archives.gov/object/mock.jpg",
+                local_path=None,
+                nara_text="Paul Schultze-Naumburg 1869 Naumburg 347541",
+                ocr_text=None,
+                ocr_engine=None,
+            )
+        ]
 
-    monkeypatch.setattr("naratrace.processing.jobs.materialize_best_page", fake_materialize_best_page)
+    monkeypatch.setattr("naratrace.processing.jobs.materialize_relevant_pages", fake_materialize_relevant_pages)
 
     app = create_app()
     async with app.router.lifespan_context(app):
@@ -341,6 +378,92 @@ async def test_create_search_job_with_api_key_stores_real_nara_candidates(tmp_pa
             assert results[0]["source_page_url"] == "https://catalog.archives.gov/object/mock.jpg"
             assert results[0]["transcript_text"] == "Paul Schultze-Naumburg 1869 Naumburg 347541"
             assert results[0]["transcript_source"] == "NARA Extracted Text"
+            assert results[0]["media_pages"][0]["media_type"] == "image"
+            assert results[0]["media_pages"][0]["media_url"] == "https://catalog.archives.gov/object/mock.jpg"
+            assert results[0]["record_years"] == [1869]
+
+
+@pytest.mark.asyncio
+async def test_search_result_groups_multiple_media_pages_and_mp4(tmp_path, monkeypatch):
+    isolate_nara_key(monkeypatch, tmp_path, api_key="test-key")
+    monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
+    reset_settings_cache()
+    reset_paths_cache()
+
+    async def fake_run_nara_candidate_search(payload, api_key):
+        return NaraSearchResponse(
+            total=1,
+            raw={"mocked": True},
+            items=[
+                NaraSearchItem(
+                    record=NaraRecord(
+                        naId=213259758,
+                        title="Adolf Hitler digital objects",
+                        description="Adolf Hitler with image and moving image material.",
+                        digitalObjects=[
+                            {
+                                "objectUrl": "https://catalog.archives.gov/media/page-1.jpg",
+                                "objectFilename": "page-1.jpg",
+                                "mimeType": "image/jpeg",
+                                "extractedText": "Adolf Hitler",
+                            },
+                            {
+                                "objectUrl": "https://catalog.archives.gov/media/film.mp4",
+                                "objectFilename": "film.mp4",
+                                "mimeType": "video/mp4",
+                            },
+                        ],
+                    ),
+                    raw={"_source": {"record": {"naId": 213259758}}},
+                )
+            ],
+        )
+
+    async def fake_materialize_relevant_pages(job_id, naid, record, payload):
+        return [
+            MaterializedPage(
+                object_data=record.digitalObjects[0],
+                page_number=1,
+                image_url="https://catalog.archives.gov/media/page-1.jpg",
+                local_path=None,
+                nara_text="Adolf Hitler",
+                ocr_text=None,
+                ocr_engine=None,
+            ),
+            MaterializedPage(
+                object_data=record.digitalObjects[1],
+                page_number=2,
+                image_url="https://catalog.archives.gov/media/film.mp4",
+                local_path=None,
+                nara_text=None,
+                ocr_text=None,
+                ocr_engine=None,
+            ),
+        ]
+
+    monkeypatch.setattr("naratrace.processing.jobs.run_nara_candidate_search", fake_run_nara_candidate_search)
+    monkeypatch.setattr("naratrace.processing.jobs.materialize_relevant_pages", fake_materialize_relevant_pages)
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            create_response = await client.post("/api/search", json={"first_name": "Adolf", "last_name": "Hitler"})
+            assert create_response.status_code == 201
+            job = await wait_for_terminal_job(client, create_response.json()["id"])
+
+            results = (await client.get(f"/api/search/{job['id']}/results")).json()
+            assert len(results) == 1
+            assert results[0]["relevant_pages_count"] == 2
+            assert [page["media_type"] for page in results[0]["media_pages"]] == ["image", "video"]
+            assert results[0]["media_pages"][1]["media_url"] == "https://catalog.archives.gov/media/film.mp4"
+            assert results[0]["media_pages"][1]["mime_type"] == "video/mp4"
+
+            history = (await client.get("/api/search")).json()
+            assert history[0]["preview_title"] == "Adolf Hitler"
+            assert history[0]["preview_media_type"] == "image"
+            assert history[0]["preview_media_url"] == "https://catalog.archives.gov/media/page-1.jpg"
 
 
 @pytest.mark.asyncio
@@ -383,24 +506,26 @@ async def test_search_job_commits_candidates_while_materialization_continues(tmp
     second_materialization_started = asyncio.Event()
     release_second_materialization = asyncio.Event()
 
-    async def fake_materialize_best_page(job_id, naid, record, payload):
+    async def fake_materialize_relevant_pages(job_id, naid, record, payload):
         nonlocal materialize_calls
         materialize_calls += 1
         if materialize_calls == 2:
             second_materialization_started.set()
             await release_second_materialization.wait()
-        return MaterializedPage(
-            object_data=record.digitalObjects[0],
-            page_number=1,
-            image_url=f"https://catalog.archives.gov/object/{naid}.jpg",
-            local_path=None,
-            nara_text=record.digitalObjects[0]["extractedText"],
-            ocr_text=None,
-            ocr_engine=None,
-        )
+        return [
+            MaterializedPage(
+                object_data=record.digitalObjects[0],
+                page_number=1,
+                image_url=f"https://catalog.archives.gov/object/{naid}.jpg",
+                local_path=None,
+                nara_text=record.digitalObjects[0]["extractedText"],
+                ocr_text=None,
+                ocr_engine=None,
+            )
+        ]
 
     monkeypatch.setattr("naratrace.processing.jobs.run_nara_candidate_search", fake_run_nara_candidate_search)
-    monkeypatch.setattr("naratrace.processing.jobs.materialize_best_page", fake_materialize_best_page)
+    monkeypatch.setattr("naratrace.processing.jobs.materialize_relevant_pages", fake_materialize_relevant_pages)
 
     app = create_app()
     async with app.router.lifespan_context(app):
@@ -462,25 +587,27 @@ async def test_cancel_search_job_keeps_background_task_cancelled(tmp_path, monke
     materialization_cancelled = asyncio.Event()
     release_materialization = asyncio.Event()
 
-    async def fake_materialize_best_page(job_id, naid, record, payload):
+    async def fake_materialize_relevant_pages(job_id, naid, record, payload):
         materialization_started.set()
         try:
             await release_materialization.wait()
         except asyncio.CancelledError:
             materialization_cancelled.set()
             raise
-        return MaterializedPage(
-            object_data=record.digitalObjects[0],
-            page_number=1,
-            image_url="https://catalog.archives.gov/object/cancel.jpg",
-            local_path=None,
-            nara_text="Paul Schultze-Naumburg 347541",
-            ocr_text=None,
-            ocr_engine=None,
-        )
+        return [
+            MaterializedPage(
+                object_data=record.digitalObjects[0],
+                page_number=1,
+                image_url="https://catalog.archives.gov/object/cancel.jpg",
+                local_path=None,
+                nara_text="Paul Schultze-Naumburg 347541",
+                ocr_text=None,
+                ocr_engine=None,
+            )
+        ]
 
     monkeypatch.setattr("naratrace.processing.jobs.run_nara_candidate_search", fake_run_nara_candidate_search)
-    monkeypatch.setattr("naratrace.processing.jobs.materialize_best_page", fake_materialize_best_page)
+    monkeypatch.setattr("naratrace.processing.jobs.materialize_relevant_pages", fake_materialize_relevant_pages)
 
     app = create_app()
     async with app.router.lifespan_context(app):
@@ -540,19 +667,21 @@ async def test_update_search_result_transcript_persists_manual_correction(tmp_pa
             ],
         )
 
-    async def fake_materialize_best_page(job_id, naid, record, payload):
-        return MaterializedPage(
-            object_data=record.digitalObjects[0],
-            page_number=1,
-            image_url="https://catalog.archives.gov/object/card.jpg",
-            local_path=None,
-            nara_text="Raw OCR Schultze Naumburg",
-            ocr_text=None,
-            ocr_engine=None,
-        )
+    async def fake_materialize_relevant_pages(job_id, naid, record, payload):
+        return [
+            MaterializedPage(
+                object_data=record.digitalObjects[0],
+                page_number=1,
+                image_url="https://catalog.archives.gov/object/card.jpg",
+                local_path=None,
+                nara_text="Raw OCR Schultze Naumburg",
+                ocr_text=None,
+                ocr_engine=None,
+            )
+        ]
 
     monkeypatch.setattr("naratrace.processing.jobs.run_nara_candidate_search", fake_run_nara_candidate_search)
-    monkeypatch.setattr("naratrace.processing.jobs.materialize_best_page", fake_materialize_best_page)
+    monkeypatch.setattr("naratrace.processing.jobs.materialize_relevant_pages", fake_materialize_relevant_pages)
 
     app = create_app()
     async with app.router.lifespan_context(app):

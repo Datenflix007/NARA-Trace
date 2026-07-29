@@ -691,8 +691,20 @@ describe('App', () => {
         }
         return new Response(
           JSON.stringify([
-            localResult({ id: 2, match_score: 34, suspected_person_name: 'Niedriger Treffer', title: 'Niedriger Treffer' }),
-            localResult({ id: 1, match_score: 96, suspected_person_name: 'Hoher Treffer', title: 'Hoher Treffer' })
+            localResult({
+              id: 2,
+              match_score: 34,
+              suspected_person_name: 'Niedriger Treffer',
+              title: 'Niedriger Treffer',
+              record_years: [1934, 1939]
+            }),
+            localResult({
+              id: 1,
+              match_score: 96,
+              suspected_person_name: 'Hoher Treffer',
+              title: 'Hoher Treffer',
+              record_years: [1921]
+            })
           ]),
           { status: 200, headers: { 'Content-Type': 'application/json' } }
         );
@@ -719,6 +731,9 @@ describe('App', () => {
       expect(screen.getAllByText('Hoher Treffer').length).toBeGreaterThan(0);
     });
     expect(screen.getByText('Ausgewählter Suchlauf')).toBeTruthy();
+    expect(screen.getByText('Treffer nach Jahrzehnt')).toBeTruthy();
+    expect(screen.getByText('1920er')).toBeTruthy();
+    expect(screen.getByText('1930er')).toBeTruthy();
     expect(screen.getByText('Nach Trefferwahrscheinlichkeit')).toBeTruthy();
     expect(screen.queryByText('Die Treffer konnten nicht geladen werden.')).toBeNull();
 
@@ -786,6 +801,115 @@ describe('App', () => {
     });
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:naratrace-report');
     expect(screen.getByText('Recherchebericht wurde erzeugt.')).toBeTruthy();
+  });
+
+  it('zeigt Suchlaufvorschau und blättert Bild- und MP4-Seiten im Viewer', async () => {
+    const mediaResult = localResult({
+      id: 9,
+      job_id: 'job-media',
+      data_source: 'NARA',
+      naid: '213259758',
+      title: 'Adolf Hitler digital objects',
+      suspected_person_name: 'Adolf Hitler',
+      source_page_id: 1,
+      source_page_url: '/api/pages/1/media',
+      source_page_label: 'Bildseite 1',
+      transcript_text: 'Adolf Hitler',
+      transcript_source: 'NARA Extracted Text',
+      media_pages: [
+        {
+          page_id: 1,
+          page_number: 1,
+          label: 'Bildseite 1',
+          media_url: '/api/pages/1/media',
+          media_type: 'image',
+          original_url: 'https://catalog.archives.gov/media/page-1.jpg',
+          thumbnail_url: '/api/pages/1/media',
+          mime_type: 'image/jpeg',
+          transcript_text: 'Adolf Hitler',
+          transcript_source: 'NARA Extracted Text',
+          transcript_edited: false
+        },
+        {
+          page_id: 2,
+          page_number: 2,
+          label: 'Filmseite 2',
+          media_url: 'https://catalog.archives.gov/media/film.mp4',
+          media_type: 'video',
+          original_url: 'https://catalog.archives.gov/media/film.mp4',
+          thumbnail_url: null,
+          mime_type: 'video/mp4',
+          transcript_text: null,
+          transcript_source: null,
+          transcript_edited: false
+        }
+      ]
+    });
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/api/settings') {
+        return new Response(JSON.stringify(settingsResponse()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (url === '/api/search') {
+        return new Response(
+          JSON.stringify([
+            searchJob({
+              id: 'job-media',
+              title: 'Adolf Hitler',
+              result_count: 1,
+              preview_title: 'Adolf Hitler',
+              preview_subtitle: 'Adolf Hitler digital objects',
+              preview_media_url: '/api/pages/1/media',
+              preview_media_type: 'image'
+            })
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url === '/api/search/job-media/results') {
+        return new Response(JSON.stringify([mediaResult]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    render(App);
+
+    await fireEvent.click(screen.getByRole('link', { name: 'Suchverläufe' }));
+    await waitFor(() => {
+      expect(screen.getByAltText('Vorschau Adolf Hitler')).toBeTruthy();
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /abgeschlossen · 1 Treffer/ }));
+    await waitFor(() => {
+      expect(screen.getByText('2 Medienseiten')).toBeTruthy();
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /213259758/ }));
+
+    expect(screen.getByRole('heading', { name: 'Bildseite 1' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Name Adolf Hitler/ })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: '+' }));
+    await waitFor(() => {
+      expect(screen.getByText('125 %')).toBeTruthy();
+    });
+
+    const panLayer = document.querySelector('.media-pan-layer') as HTMLElement;
+    await fireEvent.pointerDown(panLayer, { pointerId: 1, clientX: 10, clientY: 10 });
+    await fireEvent.pointerMove(panLayer, { pointerId: 1, clientX: 32, clientY: 46 });
+    await waitFor(() => {
+      expect(panLayer.getAttribute('style')).toContain('translate(22px, 36px)');
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Weiter' }));
+    expect(screen.getByRole('heading', { name: 'Filmseite 2' })).toBeTruthy();
+    expect((document.querySelector('video') as HTMLVideoElement).getAttribute('src')).toBe(
+      'https://catalog.archives.gov/media/film.mp4'
+    );
   });
 
   it('löscht im Suchverlauf einzelne Treffer und komplette Suchläufe', async () => {

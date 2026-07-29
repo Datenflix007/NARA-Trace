@@ -23,6 +23,8 @@ MAX_DOWNLOAD_MB = MAX_DOWNLOAD_BYTES // (1024 * 1024)
 DOWNLOAD_TIMEOUT_SECONDS = 30.0
 OCR_TIMEOUT_SECONDS = 20
 BROWSER_DISPLAY_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+BROWSER_VIDEO_SUFFIXES = {".mp4", ".webm", ".ogg", ".ogv"}
+MAX_MEDIA_PAGES_PER_RESULT = 12
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,7 @@ class MaterializedPage:
     ocr_text: str | None
     ocr_engine: str | None
     warning: str | None = None
+    is_relevant: bool = True
 
 
 async def materialize_best_page(job_id: str, naid: str, record: NaraRecord, payload: SearchRequest) -> MaterializedPage | None:
@@ -43,6 +46,22 @@ async def materialize_best_page(job_id: str, naid: str, record: NaraRecord, payl
         return None
 
     index, digital_object = choice
+    return await materialize_digital_object(job_id, naid, index, digital_object)
+
+
+async def materialize_relevant_pages(job_id: str, naid: str, record: NaraRecord, payload: SearchRequest) -> list[MaterializedPage]:
+    choices = choose_relevant_digital_objects(record, payload, limit=MAX_MEDIA_PAGES_PER_RESULT)
+    best_choice = choose_relevant_digital_object(record, payload)
+    best_index = best_choice[0] if best_choice else (choices[0][0] if choices else None)
+    pages: list[MaterializedPage] = []
+    for index, digital_object in choices:
+        pages.append(await materialize_digital_object(job_id, naid, index, digital_object, is_relevant=index == best_index))
+    return pages
+
+
+async def materialize_digital_object(
+    job_id: str, naid: str, index: int, digital_object: dict[str, Any], is_relevant: bool = True
+) -> MaterializedPage:
     image_url = extract_object_url(digital_object)
     nara_text = extract_digital_object_text(digital_object)
     local_path: str | None = None
@@ -50,7 +69,9 @@ async def materialize_best_page(job_id: str, naid: str, record: NaraRecord, payl
     ocr_engine: str | None = None
     warning: str | None = None
 
-    if image_url:
+    if image_url and is_probable_video_object(digital_object):
+        warning = None
+    elif image_url:
         try:
             downloaded = await download_digital_object(job_id, naid, index, image_url)
             local_image = ensure_display_image(downloaded)
@@ -71,12 +92,32 @@ async def materialize_best_page(job_id: str, naid: str, record: NaraRecord, payl
         ocr_text=ocr_text,
         ocr_engine=ocr_engine,
         warning=warning,
+        is_relevant=is_relevant,
     )
 
 
 def choose_relevant_digital_object(record: NaraRecord, payload: SearchRequest) -> tuple[int, dict[str, Any]] | None:
-    if not record.digitalObjects:
+    scored = score_digital_objects(record, payload)
+    if not scored:
         return None
+    scored.sort(reverse=True, key=lambda item: (item[0], -item[1]))
+    best_score, index, digital_object = scored[0]
+    if best_score <= 0 and not extract_object_url(digital_object) and not extract_digital_object_text(digital_object):
+        return None
+    return index, digital_object
+
+
+def choose_relevant_digital_objects(
+    record: NaraRecord, payload: SearchRequest, limit: int = MAX_MEDIA_PAGES_PER_RESULT
+) -> list[tuple[int, dict[str, Any]]]:
+    scored = score_digital_objects(record, payload)
+    scored.sort(key=lambda item: item[1])
+    return [(index, data) for _, index, data in scored[:limit]]
+
+
+def score_digital_objects(record: NaraRecord, payload: SearchRequest) -> list[tuple[float, int, dict[str, Any]]]:
+    if not record.digitalObjects:
+        return []
     terms = build_matching_terms(payload)
     scored: list[tuple[float, int, dict[str, Any]]] = []
     for index, digital_object in enumerate(record.digitalObjects):
@@ -95,12 +136,12 @@ def choose_relevant_digital_object(record: NaraRecord, payload: SearchRequest) -
             score += 2.0
         if is_probable_image_url(extract_object_url(digital_object)):
             score += 1.0
-        scored.append((score, -index, digital_object))
-    scored.sort(reverse=True, key=lambda item: (item[0], item[1]))
-    best = scored[0]
-    if best[0] <= 0 and not extract_object_url(best[2]) and not extract_digital_object_text(best[2]):
-        return None
-    return -best[1], best[2]
+        if is_probable_video_object(digital_object):
+            score += 1.0
+        has_content = bool(extract_object_url(digital_object) or extract_digital_object_text(digital_object))
+        if has_content:
+            scored.append((score, index, digital_object))
+    return scored
 
 
 def build_matching_terms(payload: SearchRequest) -> list[str]:
@@ -273,11 +314,29 @@ def is_probable_image_url(url: str | None) -> bool:
     return path.endswith((".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".gif"))
 
 
+def is_probable_video_object(digital_object: dict[str, Any]) -> bool:
+    mime_type = first_string(digital_object, "mimeType", "mime_type", "contentType")
+    if mime_type and mime_type.split(";", 1)[0].strip().casefold().startswith("video/"):
+        return True
+    return is_browser_video_url(extract_object_url(digital_object))
+
+
 def is_browser_display_url(url: str | None) -> bool:
     if not url:
         return False
     path = urlparse(url).path.casefold()
     return any(path.endswith(suffix) for suffix in BROWSER_DISPLAY_SUFFIXES)
+
+
+def is_browser_video_url(url: str | None) -> bool:
+    if not url:
+        return False
+    path = urlparse(url).path.casefold()
+    return any(path.endswith(suffix) for suffix in BROWSER_VIDEO_SUFFIXES)
+
+
+def is_browser_video_file(path: Path) -> bool:
+    return path.suffix.casefold() in BROWSER_VIDEO_SUFFIXES
 
 
 def infer_suffix(url: str, content_type: str | None) -> str:
@@ -315,3 +374,11 @@ def normalize_text(value: str) -> str:
     normalized = re.sub(r"[.,;:]+", " ", normalized)
     normalized = re.sub(r"\s+", " ", normalized)
     return normalized
+
+
+def first_string(data: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None

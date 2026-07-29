@@ -214,6 +214,11 @@ p {
   background: #ffffff;
 }
 
+.compact-button {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
 .button:disabled {
   cursor: wait;
   opacity: 0.7;
@@ -562,6 +567,76 @@ textarea {
   margin-top: 28px;
 }
 
+.decade-overview {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 24px;
+  border: 1px solid #cad2cf;
+  border-radius: 8px;
+  padding: 18px;
+  background: #ffffff;
+}
+
+.decade-overview .section-heading {
+  margin-bottom: 0;
+}
+
+.decade-chart-wrap {
+  overflow-x: auto;
+}
+
+.decade-chart {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(56px, 1fr);
+  gap: 10px;
+  align-items: end;
+  min-width: 560px;
+  height: 230px;
+  border-left: 1px solid #7c8784;
+  border-bottom: 1px solid #7c8784;
+  padding: 16px 10px 26px;
+  background:
+    repeating-linear-gradient(
+      to top,
+      transparent 0,
+      transparent 54px,
+      rgba(124, 135, 132, 0.24) 55px
+    );
+}
+
+.decade-column {
+  display: grid;
+  grid-template-rows: 22px minmax(0, 1fr) auto;
+  justify-items: center;
+  align-items: end;
+  height: 100%;
+}
+
+.decade-count,
+.decade-label,
+.decade-note {
+  color: #4d5857;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.decade-bar {
+  width: min(36px, 72%);
+  min-height: 5px;
+  border-radius: 3px 3px 0 0;
+  background: #236f82;
+}
+
+.decade-label {
+  margin-top: 8px;
+  white-space: nowrap;
+}
+
+.decade-note {
+  margin: 0;
+}
+
 .result-card-list {
   display: grid;
   gap: 34px;
@@ -687,6 +762,12 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.match-media-line {
+  color: #285f5a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .match-facts {
   display: flex;
   flex-wrap: wrap;
@@ -723,7 +804,7 @@ textarea {
 
 .history-workspace {
   display: grid;
-  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
   gap: 18px;
   align-items: start;
 }
@@ -762,7 +843,9 @@ textarea {
 
 .history-row {
   display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
   gap: 5px;
+  align-items: start;
   width: 100%;
   border: 1px solid #cad2cf;
   border-radius: 8px;
@@ -771,6 +854,36 @@ textarea {
   color: #5f6868;
   text-align: left;
   cursor: pointer;
+}
+
+.history-preview-frame {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 82px;
+  border: 1px solid #bac5c2;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #dfe5e3;
+}
+
+.history-preview-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.history-row-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.history-preview-title {
+  color: #5f6868;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .history-meta-line {
@@ -860,15 +973,35 @@ textarea {
   font-weight: 850;
 }
 
+.media-type-preview {
+  color: #285f5a;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
 .detail-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+  grid-template-columns: minmax(420px, 1.08fr) minmax(310px, 0.82fr);
   gap: 18px;
   align-items: start;
 }
 
 .inline-detail-shell {
   grid-template-columns: minmax(320px, 1.15fr) minmax(320px, 0.85fr);
+}
+
+.detail-page {
+  width: min(980px, 100%);
+  margin: 0 auto;
+}
+
+.detail-page h1 {
+  font-size: 44px;
+}
+
+.detail-page .interactive-media-stage,
+.detail-page .video-stage {
+  min-height: 520px;
 }
 
 .document-stage {
@@ -883,6 +1016,57 @@ textarea {
   display: block;
   width: 100%;
   height: auto;
+}
+
+.media-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+  color: #5f6868;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.interactive-media-stage {
+  display: grid;
+  place-items: center;
+  min-height: 420px;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.media-pan-layer {
+  position: relative;
+  width: 100%;
+  transform-origin: center center;
+  cursor: grab;
+  user-select: none;
+}
+
+.media-pan-layer.dragging {
+  cursor: grabbing;
+}
+
+.media-pan-layer img {
+  pointer-events: none;
+}
+
+.video-stage {
+  display: grid;
+  place-items: center;
+  min-height: 420px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #101414;
+}
+
+.video-stage video {
+  display: block;
+  width: 100%;
+  max-height: 76vh;
+  background: #101414;
 }
 
 .catalog-preview {
@@ -1383,6 +1567,10 @@ footer {
   }
 
   h1 {
+    font-size: 40px;
+  }
+
+  .detail-page h1 {
     font-size: 40px;
   }
 }

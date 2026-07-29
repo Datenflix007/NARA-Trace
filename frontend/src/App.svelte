@@ -20,6 +20,7 @@
     type HealthResponse,
     type LocalDocumentResponse,
     type NaraApiUsageResponse,
+    type ResultMediaPageResponse,
     type SearchJobResponse,
     type SearchResultResponse,
     type SettingsResponse
@@ -59,7 +60,30 @@
     transcriptText: string;
     transcriptSource: string;
     transcriptEdited: boolean;
+    mediaPages: DisplayMediaPage[];
+    recordYears: number[];
     evidence: string[];
+  };
+
+  type DisplayMediaPage = {
+    pageId: number | null;
+    pageNumber: number;
+    label: string;
+    mediaUrl: string | null;
+    mediaType: 'image' | 'video' | 'catalog' | 'unknown';
+    originalUrl: string | null;
+    thumbnailUrl: string | null;
+    mimeType: string | null;
+    transcriptText: string | null;
+    transcriptSource: string | null;
+    transcriptEdited: boolean;
+  };
+
+  type DecadeBucket = {
+    decade: number;
+    label: string;
+    count: number;
+    percent: number;
   };
 
   type LocalDocumentMatch = {
@@ -84,6 +108,8 @@
   const SEARCH_STATUS_MAX_POLL_FAILURES = 5;
   const HISTORY_LOAD_RETRY_MS = 800;
   const HISTORY_LOAD_MAX_ATTEMPTS = 8;
+  const MAX_SEARCH_CANDIDATES = 2000;
+  const NARA_SEARCH_PAGE_SIZE = 100;
 
   const demoTranscriptLines: TranscriptLine[] = [
     {
@@ -162,6 +188,22 @@
       transcriptText: demoTranscriptText,
       transcriptSource: 'manuelle Demo-Transkription',
       transcriptEdited: false,
+      mediaPages: [
+        {
+          pageId: null,
+          pageNumber: 2,
+          label: 'SchulzeNaumburg_NSDAP_Kartei1931.pdf, Seite 2',
+          mediaUrl: schultzePage2Url,
+          mediaType: 'image',
+          originalUrl: null,
+          thumbnailUrl: schultzePage2Url,
+          mimeType: 'image/png',
+          transcriptText: demoTranscriptText,
+          transcriptSource: 'manuelle Demo-Transkription',
+          transcriptEdited: false
+        }
+      ],
+      recordYears: [1931],
       evidence: ['Name und Mitgliedsnummer passen.', 'Geburtsort Almrich sowie Wohnorte Naumburg und später Weimar stützen den Treffer.', 'Aktenfoto ist in Seite 4 der lokalen PDF enthalten.']
     },
     {
@@ -186,6 +228,8 @@
       transcriptText: '',
       transcriptSource: 'kein Transkript',
       transcriptEdited: false,
+      mediaPages: [],
+      recordYears: [],
       evidence: ['Namensähnlichkeit vorhanden.', 'Geburtsdaten fehlen.']
     },
     {
@@ -210,6 +254,8 @@
       transcriptText: '',
       transcriptSource: 'kein Transkript',
       transcriptEdited: false,
+      mediaPages: [],
+      recordYears: [],
       evidence: ['Nachname teilweise ähnlich.', 'Geburtsdatum widerspricht dem Suchprofil.']
     }
   ]);
@@ -275,6 +321,19 @@
   let transcriptError = '';
   let transcriptNotices: Record<string, string> = {};
   let transcriptErrors: Record<string, string> = {};
+  let selectedMediaIndexes: Record<string, number> = {};
+  let mediaZoomLevels: Record<string, number> = {};
+  let mediaPanOffsets: Record<string, { x: number; y: number }> = {};
+  let draggingMedia:
+    | {
+        key: string;
+        pointerId: number;
+        startX: number;
+        startY: number;
+        originX: number;
+        originY: number;
+      }
+    | null = null;
 
   $: focusedLineId = hoveredLineId || pinnedLineId;
   $: currentSearchProgressPercent = searchProgressPercent(currentJob);
@@ -335,7 +394,7 @@
 
   function sortDisplayResults(results: DisplayResult[]): DisplayResult[] {
     return [...results].sort((left, right) => {
-      const displayPriority = Number(Boolean(right.sourcePageUrl)) - Number(Boolean(left.sourcePageUrl));
+      const displayPriority = Number(Boolean(firstDisplayableMediaPage(right))) - Number(Boolean(firstDisplayableMediaPage(left)));
       return displayPriority || right.matchScore - left.matchScore;
     });
   }
@@ -348,6 +407,37 @@
 
   function scoreLabel(score: number) {
     return `${Math.round(score)} %`;
+  }
+
+  function clampSearchCandidates(value: number) {
+    return Math.max(1, Math.min(Number(value) || 1, MAX_SEARCH_CANDIDATES));
+  }
+
+  function decadeBucketsFor(results: DisplayResult[]): DecadeBucket[] {
+    const counts = new Map<number, number>();
+    for (const result of results) {
+      const decades = new Set(
+        result.recordYears
+          .filter((year) => Number.isFinite(year) && year >= 1700)
+          .map((year) => Math.floor(year / 10) * 10)
+      );
+      for (const decade of decades) {
+        counts.set(decade, (counts.get(decade) ?? 0) + 1);
+      }
+    }
+    const maxCount = Math.max(1, ...counts.values());
+    return [...counts.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([decade, count]) => ({
+        decade,
+        label: `${decade}er`,
+        count,
+        percent: Math.max(5, Math.round((count / maxCount) * 100))
+      }));
+  }
+
+  function undatedResultCount(results: DisplayResult[]) {
+    return results.filter((result) => result.recordYears.length === 0).length;
   }
 
   function apiUsageLabel(usage: NaraApiUsageResponse) {
@@ -430,8 +520,9 @@
 
   function initialSearchRuntimeEstimate(job: SearchJobResponse | null) {
     if (job?.mock_mode) return 8;
-    const candidateBudget = Math.max(1, Math.min(maxCandidates, 100));
-    return 20 + candidateBudget * 0.7;
+    const candidateBudget = clampSearchCandidates(maxCandidates);
+    const pageRequests = Math.max(1, Math.ceil(candidateBudget / NARA_SEARCH_PAGE_SIZE));
+    return 20 + candidateBudget * 0.7 + (pageRequests - 1) * 4;
   }
 
   function updateSearchRuntimeEstimate(job: SearchJobResponse | null) {
@@ -695,6 +786,7 @@
     const isLocal = result.data_source === 'LOCAL' || result.naid.startsWith('LOCAL-');
     const evidence = result.evidences.map((evidence) => (evidence.detail ? `${evidence.label}: ${evidence.detail}` : evidence.label));
     const transcriptText = result.transcript_text?.trim() || (isLocal ? demoTranscriptText : evidence.join('\n'));
+    const mediaPages = mediaPagesFromResponse(result, isLocal);
     return {
       resultId: result.id,
       jobId: result.job_id,
@@ -719,8 +811,220 @@
       transcriptText,
       transcriptSource: isLocal ? 'manuelle Demo-Transkription' : result.transcript_source || result.text_origin,
       transcriptEdited: Boolean(result.transcript_edited),
+      mediaPages,
+      recordYears: result.record_years ?? [],
       evidence
     };
+  }
+
+  function mediaPagesFromResponse(result: SearchResultResponse, isLocal: boolean): DisplayMediaPage[] {
+    if (isLocal) {
+      return [
+        {
+          pageId: null,
+          pageNumber: 2,
+          label: 'SchulzeNaumburg_NSDAP_Kartei1931.pdf, Seite 2',
+          mediaUrl: schultzePage2Url,
+          mediaType: 'image',
+          originalUrl: null,
+          thumbnailUrl: schultzePage2Url,
+          mimeType: 'image/png',
+          transcriptText: demoTranscriptText,
+          transcriptSource: 'manuelle Demo-Transkription',
+          transcriptEdited: false
+        }
+      ];
+    }
+    if (result.media_pages && result.media_pages.length > 0) {
+      return result.media_pages.map(mediaPageFromResponse);
+    }
+    if (result.source_page_url) {
+      return [
+        {
+          pageId: result.source_page_id,
+          pageNumber: 1,
+          label: result.source_page_label || result.title || result.naid,
+          mediaUrl: result.source_page_url,
+          mediaType: inferMediaTypeFromUrl(result.source_page_url),
+          originalUrl: result.original_url,
+          thumbnailUrl: result.source_page_url,
+          mimeType: null,
+          transcriptText: result.transcript_text,
+          transcriptSource: result.transcript_source,
+          transcriptEdited: result.transcript_edited
+        }
+      ];
+    }
+    return [];
+  }
+
+  function mediaPageFromResponse(page: ResultMediaPageResponse): DisplayMediaPage {
+    return {
+      pageId: page.page_id,
+      pageNumber: page.page_number,
+      label: page.label,
+      mediaUrl: page.media_url,
+      mediaType: page.media_type,
+      originalUrl: page.original_url,
+      thumbnailUrl: page.thumbnail_url,
+      mimeType: page.mime_type,
+      transcriptText: page.transcript_text,
+      transcriptSource: page.transcript_source,
+      transcriptEdited: page.transcript_edited
+    };
+  }
+
+  function inferMediaTypeFromUrl(url: string | null): DisplayMediaPage['mediaType'] {
+    if (!url) return 'unknown';
+    const cleanUrl = url.split(/[?#]/, 1)[0].toLowerCase();
+    if (/\.(mp4|webm|ogg|ogv)$/.test(cleanUrl)) return 'video';
+    if (/\.(jpg|jpeg|png|webp|gif)$/.test(cleanUrl)) return 'image';
+    return 'unknown';
+  }
+
+  function firstDisplayableMediaPage(result: DisplayResult): DisplayMediaPage | null {
+    return result.mediaPages.find((page) => Boolean(page.mediaUrl)) ?? null;
+  }
+
+  function previewMediaPage(result: DisplayResult): DisplayMediaPage | null {
+    return (
+      result.mediaPages.find((page) => Boolean(page.thumbnailUrl)) ??
+      result.mediaPages.find((page) => Boolean(page.mediaUrl)) ??
+      null
+    );
+  }
+
+  function currentMediaIndex(result: DisplayResult) {
+    const maxIndex = Math.max(0, result.mediaPages.length - 1);
+    const index = selectedMediaIndexes[result.key] ?? 0;
+    return Math.min(Math.max(index, 0), maxIndex);
+  }
+
+  function currentMediaPage(result: DisplayResult): DisplayMediaPage | null {
+    if (result.mediaPages.length === 0) {
+      return null;
+    }
+    return result.mediaPages[currentMediaIndex(result)];
+  }
+
+  function currentMediaLabel(result: DisplayResult) {
+    return currentMediaPage(result)?.label ?? result.sourcePageLabel;
+  }
+
+  function setMediaPage(result: DisplayResult, index: number) {
+    if (result.mediaPages.length === 0) {
+      return;
+    }
+    const maxIndex = result.mediaPages.length - 1;
+    selectedMediaIndexes = { ...selectedMediaIndexes, [result.key]: Math.min(Math.max(index, 0), maxIndex) };
+    resetMediaTransform(result);
+  }
+
+  function previousMediaPage(result: DisplayResult) {
+    setMediaPage(result, currentMediaIndex(result) - 1);
+  }
+
+  function nextMediaPage(result: DisplayResult) {
+    setMediaPage(result, currentMediaIndex(result) + 1);
+  }
+
+  function mediaZoom(result: DisplayResult) {
+    return mediaZoomLevels[result.key] ?? 1;
+  }
+
+  function mediaPan(result: DisplayResult) {
+    return mediaPanOffsets[result.key] ?? { x: 0, y: 0 };
+  }
+
+  function mediaTransformStyle(result: DisplayResult) {
+    const pan = mediaPan(result);
+    return `transform: translate(${pan.x}px, ${pan.y}px) scale(${mediaZoom(result)});`;
+  }
+
+  function zoomMedia(result: DisplayResult, delta: number) {
+    const nextZoom = Math.min(4, Math.max(0.5, Math.round((mediaZoom(result) + delta) * 100) / 100));
+    mediaZoomLevels = { ...mediaZoomLevels, [result.key]: nextZoom };
+    if (nextZoom === 1) {
+      mediaPanOffsets = { ...mediaPanOffsets, [result.key]: { x: 0, y: 0 } };
+    }
+    refreshMediaViewer(result);
+  }
+
+  function resetMediaTransform(result: DisplayResult) {
+    mediaZoomLevels = { ...mediaZoomLevels, [result.key]: 1 };
+    mediaPanOffsets = { ...mediaPanOffsets, [result.key]: { x: 0, y: 0 } };
+    if (draggingMedia?.key === result.key) {
+      draggingMedia = null;
+    }
+    refreshMediaViewer(result);
+  }
+
+  function refreshMediaViewer(result: DisplayResult) {
+    if (detailResult?.key === result.key) {
+      detailResult = { ...detailResult };
+    }
+    if (currentResults.some((item) => item.key === result.key)) {
+      currentResults = [...currentResults];
+    }
+    if (selectedHistoryResults.some((item) => item.key === result.key)) {
+      selectedHistoryResults = [...selectedHistoryResults];
+    }
+  }
+
+  function beginMediaPan(event: PointerEvent, result: DisplayResult) {
+    const mediaPage = currentMediaPage(result);
+    if (!mediaPage || mediaPage.mediaType !== 'image') {
+      return;
+    }
+    const pan = mediaPan(result);
+    draggingMedia = {
+      key: result.key,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: pan.x,
+      originY: pan.y
+    };
+    const target = event.currentTarget as HTMLElement;
+    if (typeof target.setPointerCapture === 'function') {
+      target.setPointerCapture(event.pointerId);
+    }
+    refreshMediaViewer(result);
+  }
+
+  function moveMediaPan(event: PointerEvent, result: DisplayResult) {
+    if (!draggingMedia || draggingMedia.key !== result.key || draggingMedia.pointerId !== event.pointerId) {
+      return;
+    }
+    mediaPanOffsets = {
+      ...mediaPanOffsets,
+      [result.key]: {
+        x: draggingMedia.originX + event.clientX - draggingMedia.startX,
+        y: draggingMedia.originY + event.clientY - draggingMedia.startY
+      }
+    };
+    refreshMediaViewer(result);
+  }
+
+  function endMediaPan(event: PointerEvent, result: DisplayResult) {
+    if (draggingMedia?.key === result.key && draggingMedia.pointerId === event.pointerId) {
+      draggingMedia = null;
+      refreshMediaViewer(result);
+    }
+  }
+
+  function previewMediaLabel(result: DisplayResult) {
+    const media = previewMediaPage(result);
+    if (!media) return 'Keine Medienvorschau';
+    if (media.mediaType === 'video') return 'MP4';
+    if (media.mediaType === 'image') return 'Bild';
+    return 'Vorschau';
+  }
+
+  function jobPreviewLabel(job: SearchJobResponse) {
+    if (job.preview_media_type === 'video') return 'MP4';
+    if (job.preview_media_type === 'image') return 'Bild';
+    return 'Vorschau';
   }
 
   function hotspotStyle(line: TranscriptLine) {
@@ -737,9 +1041,11 @@
       buildTranscriptRow(result, 'birth-place', 'Geburtsort', result.birthPlace, 'aus NARA-Text, OCR oder Suchprofil'),
       buildTranscriptRow(result, 'residence', 'Wohnort', result.residencePlace, 'aus NARA-Text, OCR oder Suchprofil')
     ].filter((line): line is TranscriptLine => Boolean(line));
-    return rows.length > 0
-      ? rows
-      : [buildTranscriptRow(result, 'title', 'Datensatz', result.title, 'NARA-Metadaten') as TranscriptLine];
+    if (rows.length > 0) {
+      return rows;
+    }
+    const fallbackRow = buildTranscriptRow(result, 'title', 'Datensatz', result.title, 'NARA-Metadaten');
+    return fallbackRow ? [fallbackRow] : [];
   }
 
   function buildTranscriptRow(
@@ -879,7 +1185,7 @@
         membership_number: membershipNumber.trim() || undefined,
         naid: naid.trim() || undefined,
         record_group: recordGroup.trim() || undefined,
-        max_candidates: maxCandidates
+        max_candidates: clampSearchCandidates(maxCandidates)
       });
       currentJob = startedJob;
       updateSearchRuntimeEstimate(startedJob);
@@ -1315,7 +1621,7 @@
           </label>
           <label>
             Maximale Kandidatenzahl
-            <input bind:value={maxCandidates} type="number" min="1" max="500" />
+            <input bind:value={maxCandidates} type="number" min="1" max={MAX_SEARCH_CANDIDATES} />
           </label>
         </fieldset>
         <button class="button" type="submit" disabled={searchLoading}>
@@ -1458,7 +1764,30 @@
         <p class="error">{exportError}</p>
       {/if}
       {#if currentResults.length > 0}
+        {@const currentDecadeBuckets = decadeBucketsFor(currentResults)}
         <section class="results" aria-label="Suchergebnisse">
+          {#if currentDecadeBuckets.length > 0}
+            <section class="decade-overview" aria-label="Treffer nach Jahrzehnt">
+              <div class="section-heading">
+                <span class="eyebrow">Zeitübersicht</span>
+                <h2>Treffer nach Jahrzehnt</h2>
+              </div>
+              <div class="decade-chart-wrap">
+                <div class="decade-chart">
+                  {#each currentDecadeBuckets as bucket}
+                    <div class="decade-column">
+                      <span class="decade-count">{bucket.count}</span>
+                      <span class="decade-bar" style={`height: ${bucket.percent}%;`}></span>
+                      <span class="decade-label">{bucket.label}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+              {#if undatedResultCount(currentResults) > 0}
+                <p class="decade-note">{undatedResultCount(currentResults)} Treffer ohne auswertbare Jahresangabe.</p>
+              {/if}
+            </section>
+          {/if}
           <div class="section-heading">
             <span class="eyebrow">Treffer</span>
             <h2>Nach Trefferwahrscheinlichkeit</h2>
@@ -1484,42 +1813,82 @@
                   <section class="original-pane" aria-label={`Originalseite ${result.name}`}>
                     <div class="section-heading">
                       <span class="eyebrow">Originalseite</span>
-                      <h2>{result.sourcePageLabel}</h2>
+                      <h2>{currentMediaLabel(result)}</h2>
                     </div>
-                    {#if result.sourcePageUrl}
-                      <div class="document-stage">
-                        <img src={result.sourcePageUrl} alt={result.sourcePageLabel} />
-                        {#each result.lines as line}
-                          <button
-                            class="document-hotspot"
-                            class:active={focusedLineId === line.id}
-                            style={hotspotStyle(line)}
-                            type="button"
-                            aria-label={line.label}
-                            onmouseenter={() => setHoveredLine(line.id)}
-                            onmouseleave={clearHoveredLine}
-                            onfocus={() => setHoveredLine(line.id)}
-                            onblur={clearHoveredLine}
-                            onclick={() => togglePinnedLine(line.id)}
-                          >
-                            <span>{line.label}</span>
-                          </button>
-                        {/each}
-                      </div>
-                    {:else if result.sourceCatalogUrl}
-                      <div class="catalog-preview">
-                        <iframe title={`NARA Catalog Datensatz ${result.naid}`} src={result.sourceCatalogUrl}></iframe>
-                        <div class="catalog-preview-link">
-                          <a class="button secondary" href={result.sourceCatalogUrl} target="_blank" rel="noreferrer">
-                            NARA-Datensatz öffnen
-                          </a>
+                    {#if true}
+                      {@const mediaPage = currentMediaPage(result)}
+                      {#if mediaPage}
+                        <div class="media-toolbar" aria-label={`Mediensteuerung ${result.name}`}>
+                          {#if result.mediaPages.length > 1}
+                            <button class="button secondary compact-button" type="button" onclick={() => previousMediaPage(result)} disabled={currentMediaIndex(result) === 0}>
+                              Zurück
+                            </button>
+                            <span>{currentMediaIndex(result) + 1} / {result.mediaPages.length}</span>
+                            <button class="button secondary compact-button" type="button" onclick={() => nextMediaPage(result)} disabled={currentMediaIndex(result) >= result.mediaPages.length - 1}>
+                              Weiter
+                            </button>
+                          {/if}
+                          {#if mediaPage.mediaType === 'image' && mediaPage.mediaUrl}
+                            <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(result, 0.25)}>+</button>
+                            <span>{Math.round(mediaZoom(result) * 100)} %</span>
+                            <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(result, -0.25)}>-</button>
+                            <button class="button secondary compact-button" type="button" onclick={() => resetMediaTransform(result)}>Reset</button>
+                          {/if}
                         </div>
+                      {/if}
+                      {#if mediaPage?.mediaUrl && mediaPage.mediaType === 'image'}
+                        <div class="document-stage interactive-media-stage">
+                          <div
+                            class="media-pan-layer"
+                            class:dragging={draggingMedia?.key === result.key}
+                            role="application"
+                            aria-label={`Bildanzeige ${mediaPage.label}`}
+                            style={mediaTransformStyle(result)}
+                            onpointerdown={(event) => beginMediaPan(event, result)}
+                            onpointermove={(event) => moveMediaPan(event, result)}
+                            onpointerup={(event) => endMediaPan(event, result)}
+                            onpointercancel={(event) => endMediaPan(event, result)}
+                          >
+                            <img src={mediaPage.mediaUrl} alt={mediaPage.label} draggable="false" />
+                            {#each result.lines as line}
+                              <button
+                                class="document-hotspot"
+                                class:active={focusedLineId === line.id}
+                                style={hotspotStyle(line)}
+                                type="button"
+                                aria-label={line.label}
+                                onpointerdown={(event) => event.stopPropagation()}
+                                onmouseenter={() => setHoveredLine(line.id)}
+                                onmouseleave={clearHoveredLine}
+                                onfocus={() => setHoveredLine(line.id)}
+                                onblur={clearHoveredLine}
+                                onclick={() => togglePinnedLine(line.id)}
+                              >
+                                <span>{line.label}</span>
+                              </button>
+                            {/each}
+                          </div>
+                        </div>
+                    {:else if mediaPage?.mediaUrl && mediaPage.mediaType === 'video'}
+                      <div class="video-stage">
+                        <!-- svelte-ignore a11y_media_has_caption -->
+                        <video src={mediaPage.mediaUrl} controls preload="metadata"></video>
                       </div>
-                    {:else}
-                      <div class="empty-state compact-empty">
-                        <h2>Kein lokales Originalbild</h2>
-                        <p>Für diesen Treffer ist noch keine Bildseite im lokalen Cache vorhanden.</p>
-                      </div>
+                      {:else if mediaPage?.originalUrl || result.sourceCatalogUrl}
+                        <div class="catalog-preview">
+                          <iframe title={`NARA Catalog Datensatz ${result.naid}`} src={mediaPage?.originalUrl || result.sourceCatalogUrl}></iframe>
+                          <div class="catalog-preview-link">
+                            <a class="button secondary" href={mediaPage?.originalUrl || result.sourceCatalogUrl} target="_blank" rel="noreferrer">
+                              NARA-Datensatz öffnen
+                            </a>
+                          </div>
+                        </div>
+                      {:else}
+                        <div class="empty-state compact-empty">
+                          <h2>Kein lokales Originalbild</h2>
+                          <p>Für diesen Treffer ist noch keine Bildseite im lokalen Cache vorhanden.</p>
+                        </div>
+                      {/if}
                     {/if}
                   </section>
 
@@ -1632,7 +2001,7 @@
       <div class="page-header">
         <div>
           <h1>Suchverläufe</h1>
-          <p>Gespeicherte Suchläufe und ihre gerankten Treffer.</p>
+          <p>Wähle zuerst einen gespeicherten Suchlauf aus. Danach erscheinen Treffer, Medienvorschau und Recherchebericht.</p>
         </div>
         <button class="button secondary" type="button" onclick={loadHistory} disabled={historyLoading}>
           {historyLoading ? 'Aktualisiere...' : 'Aktualisieren'}
@@ -1666,9 +2035,23 @@
                   type="button"
                   onclick={() => openHistoryJob(job)}
                 >
-                  <span class="history-title">{job.title ?? 'Unbenannter Suchlauf'}</span>
-                  <span class="history-meta-line">{jobStatusLabel(job.status)} · {resultCountLabel(job.result_count)}</span>
-                  <span>{formatDateTime(job.created_at)}</span>
+                  <span class="history-preview-frame">
+                    {#if job.preview_media_url && job.preview_media_type === 'image'}
+                      <img src={job.preview_media_url} alt={`Vorschau ${job.title ?? 'Suchlauf'}`} />
+                    {:else if job.preview_media_type === 'video'}
+                      <span class="media-type-preview">MP4</span>
+                    {:else}
+                      <span class="portrait-placeholder">{initials(job.preview_title || job.title || 'Suchlauf')}</span>
+                    {/if}
+                  </span>
+                  <span class="history-row-copy">
+                    <span class="history-title">{job.title ?? 'Unbenannter Suchlauf'}</span>
+                    {#if job.preview_subtitle}
+                      <span class="history-preview-title">{job.preview_subtitle}</span>
+                    {/if}
+                    <span class="history-meta-line">{jobStatusLabel(job.status)} · {resultCountLabel(job.result_count)} · {jobPreviewLabel(job)}</span>
+                    <span>{formatDateTime(job.created_at)}</span>
+                  </span>
                 </button>
                 <button
                   class="danger-button"
@@ -1741,6 +2124,29 @@
             {#if historyResultsLoading}
               <p class="muted">Lade Treffer...</p>
             {:else if selectedHistoryResults.length > 0}
+              {@const historyDecadeBuckets = decadeBucketsFor(selectedHistoryResults)}
+              {#if historyDecadeBuckets.length > 0}
+                <section class="decade-overview" aria-label="Treffer nach Jahrzehnt">
+                  <div class="section-heading">
+                    <span class="eyebrow">Zeitübersicht</span>
+                    <h2>Treffer nach Jahrzehnt</h2>
+                  </div>
+                  <div class="decade-chart-wrap">
+                    <div class="decade-chart">
+                      {#each historyDecadeBuckets as bucket}
+                        <div class="decade-column">
+                          <span class="decade-count">{bucket.count}</span>
+                          <span class="decade-bar" style={`height: ${bucket.percent}%;`}></span>
+                          <span class="decade-label">{bucket.label}</span>
+                        </div>
+                      {/each}
+                    </div>
+                  </div>
+                  {#if undatedResultCount(selectedHistoryResults) > 0}
+                    <p class="decade-note">{undatedResultCount(selectedHistoryResults)} Treffer ohne auswertbare Jahresangabe.</p>
+                  {/if}
+                </section>
+              {/if}
               <div class="section-heading history-results-heading">
                 <span class="eyebrow">Trefferliste</span>
                 <h2>Nach Trefferwahrscheinlichkeit</h2>
@@ -1755,7 +2161,13 @@
                       onkeydown={(event) => openResultDetailWithKeyboard(event, result, 'history')}
                     >
                       <span class="portrait-frame">
-                        {#if result.portraitUrl}
+                        {#if previewMediaPage(result)?.thumbnailUrl && previewMediaPage(result)?.mediaType === 'image'}
+                          <img src={previewMediaPage(result)?.thumbnailUrl ?? ''} alt={`Vorschau ${result.name}`} />
+                        {:else if previewMediaPage(result)?.mediaUrl && previewMediaPage(result)?.mediaType === 'image'}
+                          <img src={previewMediaPage(result)?.mediaUrl ?? ''} alt={`Vorschau ${result.name}`} />
+                        {:else if previewMediaPage(result)?.mediaType === 'video'}
+                          <span class="media-type-preview">MP4</span>
+                        {:else if result.portraitUrl}
                           <img src={result.portraitUrl} alt={`Aktenfoto ${result.name}`} />
                         {:else}
                           <span class="portrait-placeholder">{initials(result.name)}</span>
@@ -1769,6 +2181,7 @@
                         <span class="match-name">{result.name}</span>
                         <span class="match-record">{result.naid}</span>
                         <span class="match-title">{result.title}</span>
+                        <span class="match-media-line">{result.mediaPages.length > 1 ? `${result.mediaPages.length} Medienseiten` : previewMediaLabel(result)}</span>
                         <span class="match-facts">
                           <span>Geburtsdatum: {result.birthDate}</span>
                           <span>Wohnort: {result.residencePlace}</span>
@@ -1794,8 +2207,8 @@
             {/if}
           {:else}
             <div class="empty-state compact-empty">
-              <h2>Kein Suchlauf ausgewählt</h2>
-              <p>Wähle links einen Suchlauf aus.</p>
+              <h2>Suchlauf auswählen</h2>
+              <p>Wähle links einen Suchlauf anhand von Titel, Status, Datum und Vorschau aus. Anschließend kannst du die Treffer und Originalmedien prüfen.</p>
             </div>
           {/if}
         </section>
@@ -1816,42 +2229,82 @@
         <section class="original-pane" aria-label="Originalseite">
           <div class="section-heading">
             <span class="eyebrow">Originalseite</span>
-            <h2>{detailResult.sourcePageLabel}</h2>
+            <h2>{currentMediaLabel(detailResult)}</h2>
           </div>
-          {#if detailResult.sourcePageUrl}
-            <div class="document-stage">
-              <img src={detailResult.sourcePageUrl} alt={detailResult.sourcePageLabel} />
-              {#each detailResult.lines as line}
-                <button
-                  class="document-hotspot"
-                  class:active={focusedLineId === line.id}
-                  style={hotspotStyle(line)}
-                  type="button"
-                  aria-label={line.label}
-                  onmouseenter={() => setHoveredLine(line.id)}
-                  onmouseleave={clearHoveredLine}
-                  onfocus={() => setHoveredLine(line.id)}
-                  onblur={clearHoveredLine}
-                  onclick={() => togglePinnedLine(line.id)}
-                >
-                  <span>{line.label}</span>
-                </button>
-              {/each}
-            </div>
-          {:else if detailResult.sourceCatalogUrl}
-            <div class="catalog-preview">
-              <iframe title={`NARA Catalog Datensatz ${detailResult.naid}`} src={detailResult.sourceCatalogUrl}></iframe>
-              <div class="catalog-preview-link">
-                <a class="button secondary" href={detailResult.sourceCatalogUrl} target="_blank" rel="noreferrer">
-                  NARA-Datensatz öffnen
-                </a>
+          {#if true}
+            {@const mediaPage = currentMediaPage(detailResult)}
+            {#if mediaPage}
+              <div class="media-toolbar" aria-label="Mediensteuerung Vollansicht">
+                {#if detailResult.mediaPages.length > 1}
+                  <button class="button secondary compact-button" type="button" onclick={() => previousMediaPage(detailResult)} disabled={currentMediaIndex(detailResult) === 0}>
+                    Zurück
+                  </button>
+                  <span>{currentMediaIndex(detailResult) + 1} / {detailResult.mediaPages.length}</span>
+                  <button class="button secondary compact-button" type="button" onclick={() => nextMediaPage(detailResult)} disabled={currentMediaIndex(detailResult) >= detailResult.mediaPages.length - 1}>
+                    Weiter
+                  </button>
+                {/if}
+                {#if mediaPage.mediaType === 'image' && mediaPage.mediaUrl}
+                  <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(detailResult, 0.25)}>+</button>
+                  <span>{Math.round(mediaZoom(detailResult) * 100)} %</span>
+                  <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(detailResult, -0.25)}>-</button>
+                  <button class="button secondary compact-button" type="button" onclick={() => resetMediaTransform(detailResult)}>Reset</button>
+                {/if}
               </div>
-            </div>
-          {:else}
-            <div class="empty-state compact-empty">
-              <h2>Kein lokales Originalbild</h2>
-              <p>Für diesen Treffer ist noch keine Bildseite im lokalen Cache vorhanden.</p>
-            </div>
+            {/if}
+            {#if mediaPage?.mediaUrl && mediaPage.mediaType === 'image'}
+              <div class="document-stage interactive-media-stage">
+                <div
+                  class="media-pan-layer"
+                  class:dragging={draggingMedia?.key === detailResult.key}
+                  role="application"
+                  aria-label={`Bildanzeige ${mediaPage.label}`}
+                  style={mediaTransformStyle(detailResult)}
+                  onpointerdown={(event) => beginMediaPan(event, detailResult)}
+                  onpointermove={(event) => moveMediaPan(event, detailResult)}
+                  onpointerup={(event) => endMediaPan(event, detailResult)}
+                  onpointercancel={(event) => endMediaPan(event, detailResult)}
+                >
+                  <img src={mediaPage.mediaUrl} alt={mediaPage.label} draggable="false" />
+                  {#each detailResult.lines as line}
+                    <button
+                      class="document-hotspot"
+                      class:active={focusedLineId === line.id}
+                      style={hotspotStyle(line)}
+                      type="button"
+                      aria-label={line.label}
+                      onpointerdown={(event) => event.stopPropagation()}
+                      onmouseenter={() => setHoveredLine(line.id)}
+                      onmouseleave={clearHoveredLine}
+                      onfocus={() => setHoveredLine(line.id)}
+                      onblur={clearHoveredLine}
+                      onclick={() => togglePinnedLine(line.id)}
+                    >
+                      <span>{line.label}</span>
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {:else if mediaPage?.mediaUrl && mediaPage.mediaType === 'video'}
+              <div class="video-stage">
+                <!-- svelte-ignore a11y_media_has_caption -->
+                <video src={mediaPage.mediaUrl} controls preload="metadata"></video>
+              </div>
+            {:else if mediaPage?.originalUrl || detailResult.sourceCatalogUrl}
+              <div class="catalog-preview">
+                <iframe title={`NARA Catalog Datensatz ${detailResult.naid}`} src={mediaPage?.originalUrl || detailResult.sourceCatalogUrl}></iframe>
+                <div class="catalog-preview-link">
+                  <a class="button secondary" href={mediaPage?.originalUrl || detailResult.sourceCatalogUrl} target="_blank" rel="noreferrer">
+                    NARA-Datensatz öffnen
+                  </a>
+                </div>
+              </div>
+            {:else}
+              <div class="empty-state compact-empty">
+                <h2>Kein lokales Originalbild</h2>
+                <p>Für diesen Treffer ist noch keine Bildseite im lokalen Cache vorhanden.</p>
+              </div>
+            {/if}
           {/if}
         </section>
 
@@ -1879,9 +2332,9 @@
             </span>
           </div>
 
-          {#if detailResult.lines.length > 0}
+          {#if transcriptRowsFor(detailResult).length > 0}
             <div class="transcript-lines">
-              {#each detailResult.lines as line}
+              {#each transcriptRowsFor(detailResult) as line}
                 <button
                   class="transcript-line"
                   class:active={focusedLineId === line.id}
@@ -1929,7 +2382,7 @@
             {/if}
           </div>
 
-          {#if detailResult.lines.length === 0 && detailResult.evidence.length > 0}
+          {#if detailResult.evidence.length > 0}
             <div class="evidence-list">
               {#each detailResult.evidence as evidence}
                 <p>{evidence}</p>

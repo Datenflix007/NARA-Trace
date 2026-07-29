@@ -41,8 +41,10 @@ Der Methodik-Reiter erklärt den Workflow von Suchprofil über Kandidatenabruf u
 - asynchrone Suchjobs mit Fortschritt, Laufzeit, Restzeit und Abbruch
 - gerankte Trefferlisten mit Evidenzhinweisen
 - Suchverläufe mit lokal gespeicherten Treffern
+- Dekadenübersicht für datierbare Treffer eines Suchlaufs
 - Markdown-Rechercheberichte mit Suchprofil, Abfragen, Treffer- und Evidenzdokumentation
-- Originalseitenanzeige mit TIFF-zu-JPEG-Konvertierung für den Browser
+- Original- und Medienanzeige mit Mehrseiten-Navigation, Bild-Zoom, Mausverschiebung und MP4-Wiedergabe
+- TIFF-zu-JPEG-Konvertierung für browserfähige Bildanzeige
 - Transkriptansicht und manuelle Transkriptkorrektur
 - lokale Dokumentanalyse für PDF, PNG, JPEG, TIFF, WebP und GIF
 - lokale OCR mit Tesseract, falls auf dem System verfügbar

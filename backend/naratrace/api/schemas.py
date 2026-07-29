@@ -72,7 +72,7 @@ class SearchRequest(BaseModel):
     membership_number: str | None = None
     naid: str | None = None
     record_group: str | None = None
-    max_candidates: int = Field(default=50, ge=1, le=500)
+    max_candidates: int = Field(default=50, ge=1, le=2000)
     demo_mode: bool = False
 
 
@@ -89,6 +89,10 @@ class SearchJobResponse(BaseModel):
     completed_at: datetime | None
     result_count: int
     mock_mode: bool
+    preview_title: str | None = None
+    preview_subtitle: str | None = None
+    preview_media_url: str | None = None
+    preview_media_type: Literal["image", "video", "catalog", "unknown"] | None = None
 
 
 class MatchEvidenceResponse(BaseModel):
@@ -97,6 +101,20 @@ class MatchEvidenceResponse(BaseModel):
     detail: str | None
     score_delta: float
     source_type: str | None
+
+
+class ResultMediaPageResponse(BaseModel):
+    page_id: int
+    page_number: int
+    label: str
+    media_url: str | None
+    media_type: Literal["image", "video", "catalog", "unknown"]
+    original_url: str | None
+    thumbnail_url: str | None
+    mime_type: str | None
+    transcript_text: str | None = None
+    transcript_source: str | None = None
+    transcript_edited: bool = False
 
 
 class SearchResultResponse(BaseModel):
@@ -122,6 +140,8 @@ class SearchResultResponse(BaseModel):
     transcript_text: str | None = None
     transcript_source: str | None = None
     transcript_edited: bool = False
+    media_pages: list[ResultMediaPageResponse] = Field(default_factory=list)
+    record_years: list[int] = Field(default_factory=list)
     evidences: list[MatchEvidenceResponse]
 
 

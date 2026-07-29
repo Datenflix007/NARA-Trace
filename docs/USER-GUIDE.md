@@ -46,12 +46,16 @@ $env:NARA_API_KEY="dein-schluessel"
 6. Brich den Job ab, wenn die Anfrage falsch angelegt wurde oder zu breit läuft.
 
 Je enger und unabhängiger die Angaben sind, desto besser kann NARATrace Kandidaten bewerten.
+Die maximale Kandidatenzahl kann bis 2000 gesetzt werden. NARATrace fragt dafür mehrere NARA-Ergebnisseiten ab; höhere Werte bedeuten entsprechend mehr API-Requests und längere Medien-/OCR-Verarbeitung.
 
 ## 4. Treffer prüfen
 
 Die Trefferliste ist eine Plausibilitätsrangfolge. Öffne Treffer in der Vollansicht und prüfe:
 
 - Originalseite oder NARA-Catalog-Vorschau
+- mehrere Medienseiten eines Treffers über `Zurück` und `Weiter`
+- Bildseiten über `+`, `-`, `Reset` und Ziehen mit der Maus im Anzeigefeld
+- MP4-Digitalobjekte direkt im Medienfeld
 - NAID und Titel
 - Record Group oder Serie
 - Trefferwahrscheinlichkeit
@@ -66,6 +70,7 @@ Ein Treffer ist erst belastbar, wenn die Quelle selbst geprüft wurde.
 Unter `Suchverläufe` werden abgeschlossene und abgebrochene Suchjobs lokal gespeichert. Dort kannst du:
 
 - frühere Suchläufe wieder öffnen
+- datierbare Treffer als Übersicht nach Jahrzehnten einordnen
 - Treffer nach Wahrscheinlichkeit prüfen
 - einzelne Treffer löschen
 - komplette Suchläufe löschen

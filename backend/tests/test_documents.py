@@ -13,7 +13,7 @@ from naratrace.database.models import CandidatePage, CandidateRecord, DigitalObj
 from naratrace.database.session import dispose_database, session_scope
 from naratrace.main import create_app
 from naratrace.processing.documents import ensure_display_image
-from naratrace.processing.jobs import build_source_page_url, get_candidate_page_image_path
+from naratrace.processing.jobs import build_source_page_url, get_candidate_page_image_path, get_candidate_page_media_path
 
 
 def create_tiff(path) -> None:
@@ -173,6 +173,43 @@ def test_source_page_url_keeps_uncached_browser_image(tmp_path, monkeypatch):
             session.flush()
 
             assert build_source_page_url(page) == "https://catalog.archives.gov/media/example/remote-page.jpg"
+    finally:
+        dispose_database()
+        reset_paths_cache()
+
+
+def test_candidate_page_media_path_keeps_cached_mp4(tmp_path, monkeypatch):
+    monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
+    reset_settings_cache()
+    reset_paths_cache()
+    init_database()
+
+    try:
+        video_path = tmp_path / "film.mp4"
+        video_path.write_bytes(b"fake mp4 bytes")
+        with session_scope() as session:
+            job = SearchJob(status="complete", mode="quick", title="MP4-Test")
+            session.add(job)
+            session.flush()
+            record = CandidateRecord(job_id=job.id, naid="MP4-1", title="MP4-Test")
+            session.add(record)
+            session.flush()
+            digital_object = DigitalObject(candidate_record_id=record.id, file_name=video_path.name, mime_type="video/mp4")
+            session.add(digital_object)
+            session.flush()
+            page = CandidatePage(
+                digital_object_id=digital_object.id,
+                page_number=1,
+                local_path=str(video_path),
+                image_url="https://catalog.archives.gov/media/example/film.mp4",
+                is_relevant=True,
+            )
+            session.add(page)
+            session.flush()
+            page_id = page.id
+
+        assert get_candidate_page_media_path(page_id) == video_path
+        assert get_candidate_page_image_path(page_id) is None
     finally:
         dispose_database()
         reset_paths_cache()

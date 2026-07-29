@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from naratrace.api.schemas import (
     MatchEvidenceResponse,
+    ResultMediaPageResponse,
     SearchJobResponse,
     SearchRequest,
     SearchResultResponse,
@@ -33,12 +34,14 @@ from naratrace.database.models import (
     SearchVariant,
 )
 from naratrace.database.session import session_scope
-from naratrace.nara.client import NaraCatalogClient, NaraClientError, NaraRecord
+from naratrace.nara.client import NaraCatalogClient, NaraClientError, NaraRecord, NaraSearchResponse
 from naratrace.processing.documents import (
     MaterializedPage,
     ensure_display_image,
     is_browser_display_url,
-    materialize_best_page,
+    is_browser_video_file,
+    is_browser_video_url,
+    materialize_relevant_pages,
 )
 
 
@@ -46,6 +49,9 @@ LOCAL_DEMO_PDF_PATH = Path.home() / "Downloads" / "SchulzeNaumburg_NSDAP_Kartei1
 LOCAL_DEMO_PDF_SERIES = "A3340-MFKL-R0013.pdf"
 LOCAL_DEMO_PDF_PAGE_COUNT = 4
 NARA_QUERY_MAX_LENGTH = 1024
+NARA_SEARCH_PAGE_SIZE = 100
+NARA_SEARCH_MAX_CANDIDATES = 2000
+RECORD_YEAR_PATTERN = re.compile(r"\b(17\d{2}|18\d{2}|19\d{2}|20\d{2})\b")
 TERMINAL_JOB_STATUSES = {"complete", "failed", "cancelled"}
 
 
@@ -220,7 +226,8 @@ def list_search_jobs(limit: int = 20) -> list[SearchJobResponse]:
                 .group_by(SearchResult.job_id)
             ).all()
         )
-        return [serialize_job_model(job, result_counts.get(job.id, 0)) for job in jobs]
+        previews = build_job_previews(session, job_ids)
+        return [serialize_job_model(job, result_counts.get(job.id, 0), previews.get(job.id)) for job in jobs]
 
 
 def get_search_job(job_id: str) -> SearchJobResponse | None:
@@ -302,7 +309,7 @@ def update_search_result_transcript(job_id: str, result_id: int, transcript_text
         return serialize_result(refreshed)
 
 
-def get_candidate_page_image_path(page_id: int) -> Path | None:
+def get_candidate_page_media_path(page_id: int) -> Path | None:
     with session_scope() as session:
         page = session.get(CandidatePage, page_id)
         if page is None or not page.local_path:
@@ -310,10 +317,19 @@ def get_candidate_page_image_path(page_id: int) -> Path | None:
         path = Path(page.local_path)
         if not path.exists() or not path.is_file():
             return None
+        if is_browser_video_file(path):
+            return path
         display_path = ensure_display_image(path)
         if not display_path.exists() or not display_path.is_file():
             return None
         return display_path
+
+
+def get_candidate_page_image_path(page_id: int) -> Path | None:
+    media_path = get_candidate_page_media_path(page_id)
+    if media_path is None or is_browser_video_file(media_path):
+        return None
+    return media_path
 
 
 def load_result_for_serialization(session: Session, job_id: str, result_id: int) -> SearchResult | None:
@@ -437,17 +453,48 @@ def add_queries(session: Session, job: SearchJob, payload: SearchRequest) -> Non
     )
 
 
-async def run_nara_candidate_search(payload: SearchRequest, api_key: str):
+async def run_nara_candidate_search(payload: SearchRequest, api_key: str) -> NaraSearchResponse:
     client = NaraCatalogClient(api_key=api_key)
-    params = build_nara_params(payload)
-    return await client.search_records(params)
+    requested_candidates = max(1, min(payload.max_candidates, NARA_SEARCH_MAX_CANDIDATES))
+    items = []
+    warnings: list[str] = []
+    total: int | None = None
+    page_count = 0
+    page = 1
+
+    while len(items) < requested_candidates:
+        page_limit = min(NARA_SEARCH_PAGE_SIZE, requested_candidates - len(items))
+        response = await client.search_records(build_nara_params(payload, page=page, limit=page_limit))
+        page_count += 1
+        if total is None:
+            total = response.total
+        warnings.extend(response.warnings)
+        items.extend(response.items)
+
+        if len(response.items) < page_limit:
+            break
+        if total is not None and len(items) >= total:
+            break
+        page += 1
+
+    return NaraSearchResponse(
+        items=items[:requested_candidates],
+        total=total,
+        raw={
+            "requested_candidates": requested_candidates,
+            "page_count": page_count,
+            "page_size": NARA_SEARCH_PAGE_SIZE,
+            "total": total,
+        },
+        warnings=dedupe_warnings(warnings),
+    )
 
 
-def build_nara_params(payload: SearchRequest) -> dict[str, Any]:
-    limit = max(1, min(payload.max_candidates, 100))
+def build_nara_params(payload: SearchRequest, page: int = 1, limit: int | None = None) -> dict[str, Any]:
+    effective_limit = max(1, min(limit or payload.max_candidates, NARA_SEARCH_PAGE_SIZE))
     params: dict[str, Any] = {
-        "limit": limit,
-        "page": 1,
+        "limit": effective_limit,
+        "page": max(1, page),
         "includeExtractedText": "true",
         "availableOnline": "true",
     }
@@ -459,6 +506,18 @@ def build_nara_params(payload: SearchRequest) -> dict[str, Any]:
     if payload.record_group:
         params["recordGroupNumber"] = payload.record_group.strip()
     return params
+
+
+def dedupe_warnings(warnings: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for warning in warnings:
+        key = warning.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(key)
+    return deduped
 
 
 def build_nara_query(payload: SearchRequest) -> str:
@@ -527,14 +586,15 @@ async def store_nara_candidates(job_id: str, payload: SearchRequest, nara_respon
         if not naid or naid in seen_naids:
             continue
         seen_naids.add(naid)
-        materialized_page = await materialize_best_page(job_id, naid, record, payload)
-        if materialized_page and materialized_page.warning:
-            warnings.append(f"NAID {naid}: {materialized_page.warning}")
+        materialized_pages = await materialize_relevant_pages(job_id, naid, record, payload)
+        for materialized_page in materialized_pages:
+            if materialized_page.warning:
+                warnings.append(f"NAID {naid}: {materialized_page.warning}")
         with session_scope() as session:
             job = session.get(SearchJob, job_id)
             if job is None or job.status == "cancelled":
                 return stored, warnings
-            stored += store_nara_candidate(session, job, payload, item, materialized_page)
+            stored += store_nara_candidate(session, job, payload, item, materialized_pages)
     return stored, warnings
 
 
@@ -543,7 +603,7 @@ def store_nara_candidate(
     job: SearchJob,
     payload: SearchRequest,
     item,
-    materialized_page: MaterializedPage | None,
+    materialized_pages: list[MaterializedPage],
 ) -> int:
     record = item.record
     naid = str(record.naId or "").strip()
@@ -567,7 +627,8 @@ def store_nara_candidate(
     )
     session.add(candidate)
     session.flush()
-    page = add_materialized_page(session, candidate, materialized_page)
+    pages = add_materialized_pages(session, candidate, materialized_pages)
+    page = get_best_page_for_candidate_pages(pages)
     score, category, evidences = score_record(payload, record)
     if page is not None:
         score = min(score + 8, 100)
@@ -600,7 +661,7 @@ def store_nara_candidate(
         match_score=score,
         category=category,
         suspected_person_name=build_job_title(payload),
-        relevant_pages_count=1 if page is not None else count_relevant_objects(record),
+        relevant_pages_count=len(pages) if pages else count_relevant_objects(record),
     )
     session.add(result)
     session.flush()
@@ -618,6 +679,15 @@ def store_nara_candidate(
             )
         )
     return 1
+
+
+def add_materialized_pages(session: Session, candidate: CandidateRecord, materialized_pages: list[MaterializedPage]) -> list[CandidatePage]:
+    pages: list[CandidatePage] = []
+    for materialized_page in materialized_pages:
+        page = add_materialized_page(session, candidate, materialized_page)
+        if page is not None:
+            pages.append(page)
+    return pages
 
 
 def add_materialized_page(session: Session, candidate: CandidateRecord, materialized_page: MaterializedPage | None) -> CandidatePage | None:
@@ -651,7 +721,7 @@ def add_materialized_page(session: Session, candidate: CandidateRecord, material
         image_url=materialized_page.image_url,
         local_path=materialized_page.local_path,
         original_url=materialized_page.image_url,
-        is_relevant=True,
+        is_relevant=materialized_page.is_relevant,
         retrieved_at=now if materialized_page.local_path else None,
     )
     session.add(page)
@@ -681,6 +751,14 @@ def add_materialized_page(session: Session, candidate: CandidateRecord, material
         )
     session.flush()
     return page
+
+
+def get_best_page_for_candidate_pages(pages: list[CandidatePage]) -> CandidatePage | None:
+    if not pages:
+        return None
+    candidates = [page for page in pages if page.is_relevant] or pages
+    candidates.sort(key=lambda page: (0 if page.local_path else 1, page.page_number, page.id))
+    return candidates[0]
 
 
 def current_page_text(page: CandidatePage) -> tuple[str | None, str | None, bool]:
@@ -1058,10 +1136,10 @@ def serialize_job(session: Session, job_id: str) -> SearchJobResponse:
     result_count = session.scalar(
         select(func.count(SearchResult.id)).where(SearchResult.job_id == job_id)
     ) or 0
-    return serialize_job_model(job, result_count)
+    return serialize_job_model(job, result_count, build_job_preview(session, job_id))
 
 
-def serialize_job_model(job: SearchJob, result_count: int) -> SearchJobResponse:
+def serialize_job_model(job: SearchJob, result_count: int, preview: dict[str, str | None] | None = None) -> SearchJobResponse:
     mock_mode = bool(job.profile.mock_mode) if job.profile else False
     return SearchJobResponse(
         id=job.id,
@@ -1076,7 +1154,129 @@ def serialize_job_model(job: SearchJob, result_count: int) -> SearchJobResponse:
         completed_at=job.completed_at,
         result_count=result_count,
         mock_mode=mock_mode,
+        preview_title=preview.get("title") if preview else None,
+        preview_subtitle=preview.get("subtitle") if preview else None,
+        preview_media_url=preview.get("media_url") if preview else None,
+        preview_media_type=preview.get("media_type") if preview else None,
     )
+
+
+def build_job_previews(session: Session, job_ids: list[str]) -> dict[str, dict[str, str | None]]:
+    previews: dict[str, dict[str, str | None]] = {}
+    results = session.scalars(
+        select(SearchResult)
+        .where(SearchResult.job_id.in_(job_ids))
+        .options(
+            selectinload(SearchResult.candidate_record)
+            .selectinload(CandidateRecord.digital_objects)
+            .selectinload(DigitalObject.pages),
+        )
+        .order_by(SearchResult.job_id, desc(SearchResult.match_score))
+    ).all()
+    for result in results:
+        if result.job_id in previews:
+            continue
+        previews[result.job_id] = build_result_preview(result)
+    return previews
+
+
+def build_job_preview(session: Session, job_id: str) -> dict[str, str | None] | None:
+    result = session.scalar(
+        select(SearchResult)
+        .where(SearchResult.job_id == job_id)
+        .options(
+            selectinload(SearchResult.candidate_record)
+            .selectinload(CandidateRecord.digital_objects)
+            .selectinload(DigitalObject.pages),
+        )
+        .order_by(desc(SearchResult.match_score))
+        .limit(1)
+    )
+    return build_result_preview(result) if result else None
+
+
+def build_result_preview(result: SearchResult) -> dict[str, str | None]:
+    record = result.candidate_record
+    media_page = first_displayable_media_page(result)
+    return {
+        "title": result.suspected_person_name or record.title or f"NAID {record.naid}",
+        "subtitle": record.title or record.series or record.record_group or record.naid,
+        "media_url": media_page.media_url if media_page else None,
+        "media_type": media_page.media_type if media_page else None,
+    }
+
+
+def extract_result_years(result: SearchResult) -> list[int]:
+    record = result.candidate_record
+    metadata_sources = [
+        record.title,
+        record.description,
+        record.record_group,
+        record.series,
+        record.local_identifier,
+        record.original_url,
+    ]
+    for digital_object in record.digital_objects:
+        metadata_sources.extend(
+            [
+                digital_object.object_id,
+                digital_object.object_type,
+                digital_object.url,
+                digital_object.thumbnail_url,
+                digital_object.file_name,
+                digital_object.mime_type,
+            ]
+        )
+        for page in digital_object.pages:
+            metadata_sources.extend([page.image_url, page.original_url, page.local_path])
+    metadata_sources.extend(collect_year_source_values(record.raw_metadata))
+    years = years_from_sources(metadata_sources)
+    if years:
+        return years
+
+    text_sources: list[str | None] = []
+    for digital_object in record.digital_objects:
+        for page in digital_object.pages:
+            text_sources.extend((text.raw_text[:4000] if text.raw_text else None) for text in page.texts)
+    return years_from_sources(text_sources)
+
+
+def collect_year_source_values(value: Any, depth: int = 0) -> list[str]:
+    if depth > 5:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (int, float)):
+        return [str(value)]
+    if isinstance(value, list):
+        values: list[str] = []
+        for item in value[:50]:
+            values.extend(collect_year_source_values(item, depth + 1))
+        return values
+    if not isinstance(value, dict):
+        return []
+
+    values: list[str] = []
+    for key, child in value.items():
+        key_text = str(key).casefold()
+        if any(token in key_text for token in ("date", "year", "title", "description", "identifier", "filename", "object")):
+            values.extend(collect_year_source_values(child, depth + 1))
+        elif key_text in {"record", "_source", "source", "body"}:
+            values.extend(collect_year_source_values(child, depth + 1))
+    return values[:120]
+
+
+def years_from_sources(values: list[str | None]) -> list[int]:
+    current_year = datetime.now(timezone.utc).year
+    years: set[int] = set()
+    for value in values:
+        if not value:
+            continue
+        for match in RECORD_YEAR_PATTERN.finditer(str(value)):
+            year = int(match.group(1))
+            if 1700 <= year <= current_year:
+                years.add(year)
+    return sorted(years)
 
 
 def serialize_result(result: SearchResult) -> SearchResultResponse:
@@ -1089,6 +1289,7 @@ def serialize_result(result: SearchResult) -> SearchResultResponse:
         data_source = "NARA"
     page = get_relevant_page(result)
     transcript_text, transcript_source, transcript_edited = current_page_text(page) if page else (None, None, False)
+    media_pages = build_result_media_pages(result)
     return SearchResultResponse(
         id=result.id,
         job_id=result.job_id,
@@ -1112,6 +1313,8 @@ def serialize_result(result: SearchResult) -> SearchResultResponse:
         transcript_text=transcript_text,
         transcript_source=transcript_source,
         transcript_edited=transcript_edited,
+        media_pages=media_pages,
+        record_years=extract_result_years(result),
         evidences=[
             MatchEvidenceResponse(
                 kind=evidence.kind,
@@ -1126,9 +1329,7 @@ def serialize_result(result: SearchResult) -> SearchResultResponse:
 
 
 def get_relevant_page(result: SearchResult) -> CandidatePage | None:
-    pages: list[CandidatePage] = []
-    for digital_object in result.candidate_record.digital_objects:
-        pages.extend(digital_object.pages)
+    pages = get_result_pages(result)
     if not pages:
         return None
     relevant = [page for page in pages if page.is_relevant]
@@ -1137,16 +1338,88 @@ def get_relevant_page(result: SearchResult) -> CandidatePage | None:
     return candidates[0]
 
 
+def get_result_pages(result: SearchResult) -> list[CandidatePage]:
+    pages: list[CandidatePage] = []
+    for digital_object in result.candidate_record.digital_objects:
+        pages.extend(digital_object.pages)
+    pages.sort(key=lambda page: (page.page_number, page.id))
+    return pages
+
+
+def build_result_media_pages(result: SearchResult) -> list[ResultMediaPageResponse]:
+    record = result.candidate_record
+    return [build_result_media_page(record, page) for page in get_result_pages(result)]
+
+
+def build_result_media_page(record: CandidateRecord, page: CandidatePage) -> ResultMediaPageResponse:
+    transcript_text, transcript_source, transcript_edited = current_page_text(page)
+    return ResultMediaPageResponse(
+        page_id=page.id,
+        page_number=page.page_number,
+        label=build_source_page_label(record, page) or f"Objekt/Seite {page.page_number}",
+        media_url=build_page_media_url(page),
+        media_type=build_page_media_type(page),
+        original_url=page.original_url or page.image_url,
+        thumbnail_url=build_page_thumbnail_url(page),
+        mime_type=page.digital_object.mime_type if page.digital_object else None,
+        transcript_text=transcript_text,
+        transcript_source=transcript_source,
+        transcript_edited=transcript_edited,
+    )
+
+
+def first_displayable_media_page(result: SearchResult) -> ResultMediaPageResponse | None:
+    media_pages = build_result_media_pages(result)
+    for page in media_pages:
+        if page.media_url:
+            return page
+    return media_pages[0] if media_pages else None
+
+
 def build_source_page_url(page: CandidatePage | None) -> str | None:
     if page is None:
         return None
     if page.local_path and Path(page.local_path).exists():
+        if is_browser_video_file(Path(page.local_path)):
+            return f"/api/pages/{page.id}/media"
         return f"/api/pages/{page.id}/image"
     if is_browser_display_url(page.image_url):
+        return page.image_url
+    if is_browser_video_url(page.image_url):
         return page.image_url
     if page.digital_object and is_browser_display_url(page.digital_object.thumbnail_url):
         return page.digital_object.thumbnail_url
     return None
+
+
+def build_page_media_url(page: CandidatePage) -> str | None:
+    if page.local_path and Path(page.local_path).exists():
+        return f"/api/pages/{page.id}/media"
+    if is_browser_display_url(page.image_url) or is_browser_video_url(page.image_url):
+        return page.image_url
+    if page.digital_object and is_browser_display_url(page.digital_object.thumbnail_url):
+        return page.digital_object.thumbnail_url
+    return None
+
+
+def build_page_media_type(page: CandidatePage) -> str:
+    if page.local_path and Path(page.local_path).exists():
+        path = Path(page.local_path)
+        return "video" if is_browser_video_file(path) else "image"
+    media_url = build_page_media_url(page)
+    if is_browser_video_url(media_url):
+        return "video"
+    if is_browser_display_url(media_url):
+        return "image"
+    if page.original_url or page.image_url:
+        return "catalog"
+    return "unknown"
+
+
+def build_page_thumbnail_url(page: CandidatePage) -> str | None:
+    if page.digital_object and is_browser_display_url(page.digital_object.thumbnail_url):
+        return page.digital_object.thumbnail_url
+    return build_page_media_url(page) if build_page_media_type(page) == "image" else None
 
 
 def build_source_page_label(record: CandidateRecord, page: CandidatePage | None) -> str | None:
