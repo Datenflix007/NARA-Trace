@@ -124,13 +124,12 @@ async def execute_search_job(job_id: str, payload: SearchRequest) -> None:
         return
 
     update_job_state(job_id, "downloading_pages_ocr", 4)
+    stored_count, materialization_warnings = await store_nara_candidates(job_id, payload, nara_response)
+    update_job_state(job_id, "ranking", 5)
     with session_scope() as session:
         job = session.get(SearchJob, job_id)
         if job is None:
             return
-        job.status = "ranking"
-        job.progress_current = 5
-        stored_count, materialization_warnings = await store_nara_candidates(session, job, payload, nara_response)
         job.status = "complete"
         job.progress_current = 6
         job.completed_at = datetime.now(timezone.utc)
@@ -170,10 +169,20 @@ def fail_search_job(job_id: str, message: str, warnings: list[str] | None = None
 
 def list_search_jobs(limit: int = 20) -> list[SearchJobResponse]:
     with session_scope() as session:
-        job_ids = session.scalars(
-            select(SearchJob.id).order_by(desc(SearchJob.created_at)).limit(limit)
+        jobs = session.scalars(
+            select(SearchJob).options(selectinload(SearchJob.profile)).order_by(desc(SearchJob.created_at)).limit(limit)
         ).all()
-        return [serialize_job(session, job_id) for job_id in job_ids]
+        job_ids = [job.id for job in jobs]
+        if not job_ids:
+            return []
+        result_counts = dict(
+            session.execute(
+                select(SearchResult.job_id, func.count(SearchResult.id))
+                .where(SearchResult.job_id.in_(job_ids))
+                .group_by(SearchResult.job_id)
+            ).all()
+        )
+        return [serialize_job_model(job, result_counts.get(job.id, 0)) for job in jobs]
 
 
 def get_search_job(job_id: str) -> SearchJobResponse | None:
@@ -468,7 +477,7 @@ def dedupe_query_terms(values: list[str]) -> list[str]:
     return result
 
 
-async def store_nara_candidates(session: Session, job: SearchJob, payload: SearchRequest, nara_response) -> tuple[int, list[str]]:
+async def store_nara_candidates(job_id: str, payload: SearchRequest, nara_response) -> tuple[int, list[str]]:
     stored = 0
     warnings: list[str] = []
     seen_naids: set[str] = set()
@@ -478,78 +487,97 @@ async def store_nara_candidates(session: Session, job: SearchJob, payload: Searc
         if not naid or naid in seen_naids:
             continue
         seen_naids.add(naid)
-        materialized_page = await materialize_best_page(job.id, naid, record, payload)
+        materialized_page = await materialize_best_page(job_id, naid, record, payload)
         if materialized_page and materialized_page.warning:
             warnings.append(f"NAID {naid}: {materialized_page.warning}")
-        candidate = CandidateRecord(
-            job_id=job.id,
-            naid=naid,
-            title=record.title,
-            description=record.description,
-            record_group=extract_record_group(record),
-            series=extract_series(record),
-            local_identifier=record.localIdentifier,
-            original_url=f"https://catalog.archives.gov/id/{naid}",
-            rights_statement=stringify_restrictions(record),
-            has_digital_objects=bool(record.digitalObjects),
-            text_origin=detect_text_origin(record),
-            retrieved_at=datetime.now(timezone.utc),
-            raw_metadata=item.raw,
+        with session_scope() as session:
+            job = session.get(SearchJob, job_id)
+            if job is None:
+                return stored, warnings
+            stored += store_nara_candidate(session, job, payload, item, materialized_page)
+    return stored, warnings
+
+
+def store_nara_candidate(
+    session: Session,
+    job: SearchJob,
+    payload: SearchRequest,
+    item,
+    materialized_page: MaterializedPage | None,
+) -> int:
+    record = item.record
+    naid = str(record.naId or "").strip()
+    if not naid:
+        return 0
+
+    candidate = CandidateRecord(
+        job_id=job.id,
+        naid=naid,
+        title=record.title,
+        description=record.description,
+        record_group=extract_record_group(record),
+        series=extract_series(record),
+        local_identifier=record.localIdentifier,
+        original_url=f"https://catalog.archives.gov/id/{naid}",
+        rights_statement=stringify_restrictions(record),
+        has_digital_objects=bool(record.digitalObjects),
+        text_origin=detect_text_origin(record),
+        retrieved_at=datetime.now(timezone.utc),
+        raw_metadata=item.raw,
+    )
+    session.add(candidate)
+    session.flush()
+    page = add_materialized_page(session, candidate, materialized_page)
+    score, category, evidences = score_record(payload, record)
+    if page is not None:
+        score = min(score + 8, 100)
+        category = category_for_score(score)
+        evidences.append(
+            (
+                "positive",
+                "Relevante Originalseite lokal geladen"
+                if page.local_path
+                else "Relevante Originalseite aus NARA-Digitalobjekt erkannt",
+                page.original_url or page.image_url,
+                8,
+                "NARA-Digitalobjekt",
+            )
         )
-        session.add(candidate)
-        session.flush()
-        page = add_materialized_page(session, candidate, materialized_page)
-        score, category, evidences = score_record(payload, record)
-        if page is not None:
-            score = min(score + 8, 100)
-            category = category_for_score(score)
+        page_text = current_page_text(page)
+        if page_text[0]:
             evidences.append(
                 (
                     "positive",
-                    "Relevante Originalseite lokal geladen"
-                    if page.local_path
-                    else "Relevante Originalseite aus NARA-Digitalobjekt erkannt",
-                    page.original_url or page.image_url,
-                    8,
-                    "NARA-Digitalobjekt",
+                    "Transkript für die Originalseite verfügbar",
+                    page_text[1],
+                    6,
+                    page_text[1],
                 )
             )
-            page_text = current_page_text(page)
-            if page_text[0]:
-                evidences.append(
-                    (
-                        "positive",
-                        "Transkript für die Originalseite verfügbar",
-                        page_text[1],
-                        6,
-                        page_text[1],
-                    )
-                )
-        result = SearchResult(
-            job_id=job.id,
-            candidate_record_id=candidate.id,
-            match_score=score,
-            category=category,
-            suspected_person_name=build_job_title(payload),
-            relevant_pages_count=1 if page is not None else count_relevant_objects(record),
+    result = SearchResult(
+        job_id=job.id,
+        candidate_record_id=candidate.id,
+        match_score=score,
+        category=category,
+        suspected_person_name=build_job_title(payload),
+        relevant_pages_count=1 if page is not None else count_relevant_objects(record),
+    )
+    session.add(result)
+    session.flush()
+    for kind, label, detail, delta, source_type in evidences:
+        session.add(
+            MatchEvidence(
+                job_id=job.id,
+                candidate_record_id=candidate.id,
+                result_id=result.id,
+                kind=kind,
+                label=label,
+                detail=detail,
+                score_delta=delta,
+                source_type=source_type,
+            )
         )
-        session.add(result)
-        session.flush()
-        for kind, label, detail, delta, source_type in evidences:
-            session.add(
-                MatchEvidence(
-                    job_id=job.id,
-                    candidate_record_id=candidate.id,
-                    result_id=result.id,
-                    kind=kind,
-                    label=label,
-                    detail=detail,
-                    score_delta=delta,
-                    source_type=source_type,
-                )
-            )
-        stored += 1
-    return stored, warnings
+    return 1
 
 
 def add_materialized_page(session: Session, candidate: CandidateRecord, materialized_page: MaterializedPage | None) -> CandidatePage | None:
@@ -990,6 +1018,10 @@ def serialize_job(session: Session, job_id: str) -> SearchJobResponse:
     result_count = session.scalar(
         select(func.count(SearchResult.id)).where(SearchResult.job_id == job_id)
     ) or 0
+    return serialize_job_model(job, result_count)
+
+
+def serialize_job_model(job: SearchJob, result_count: int) -> SearchJobResponse:
     mock_mode = bool(job.profile.mock_mode) if job.profile else False
     return SearchJobResponse(
         id=job.id,

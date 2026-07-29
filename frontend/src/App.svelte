@@ -72,6 +72,8 @@
   const schultzeNaumburgPhotoUrl = '/demo/schultze-naumburg.png';
   const SEARCH_STATUS_POLL_MS = 1000;
   const SEARCH_STATUS_MAX_POLL_FAILURES = 5;
+  const HISTORY_LOAD_RETRY_MS = 800;
+  const HISTORY_LOAD_MAX_ATTEMPTS = 8;
 
   const demoTranscriptLines: TranscriptLine[] = [
     {
@@ -223,6 +225,8 @@
   let searchStartedAt: number | null = null;
   let searchNow = Date.now();
   let searchTimer: ReturnType<typeof setInterval> | null = null;
+  let searchRuntimeEstimateSeconds = 0;
+  let searchRuntimeEstimateKey = '';
   let currentJob: SearchJobResponse | null = null;
   let currentResults: DisplayResult[] = [];
   let historyJobs: SearchJobResponse[] = [];
@@ -233,6 +237,7 @@
   let deletingJobId = '';
   let deletingResultId: number | null = null;
   let historyError = '';
+  let historyHint = '';
   let settings: SettingsResponse | null = null;
   let settingsLoading = false;
   let settingsError = '';
@@ -255,6 +260,17 @@
   $: focusedLineId = hoveredLineId || pinnedLineId;
   $: currentSearchProgressPercent = searchProgressPercent(currentJob);
   $: currentSearchProgressLabel = searchProgressLabel(currentJob);
+  $: currentSearchElapsedSeconds = calculateSearchElapsedSeconds(searchStartedAt, searchNow);
+  $: currentEstimatedTotalRuntimeLabel = estimatedTotalRuntimeLabel(
+    currentJob,
+    currentSearchElapsedSeconds,
+    searchRuntimeEstimateSeconds
+  );
+  $: currentEstimatedRemainingRuntimeLabel = estimatedRemainingRuntimeLabel(
+    currentJob,
+    currentSearchElapsedSeconds,
+    searchRuntimeEstimateSeconds
+  );
   $: currentSearchSubmitLabel = searchLoading ? (currentJob ? 'Suchjob läuft...' : 'Lege Suchjob an...') : 'Suchjob anlegen';
 
   onMount(() => {
@@ -365,44 +381,69 @@
     return `${minutes} min ${restSeconds.toString().padStart(2, '0')} s`;
   }
 
-  function searchElapsedSeconds() {
-    if (!searchStartedAt) return 0;
-    return Math.max(0, (searchNow - searchStartedAt) / 1000);
+  function calculateSearchElapsedSeconds(startedAt: number | null, now: number) {
+    if (!startedAt) return 0;
+    return Math.max(0, (now - startedAt) / 1000);
   }
 
-  function estimatedTotalRuntimeLabel(job: SearchJobResponse | null) {
-    if (!job) {
-      return `ca. ${formatDuration(initialSearchRuntimeEstimate(job))}`;
-    }
-    if (terminalJobStatus(job.status)) {
-      return formatDuration(searchElapsedSeconds());
-    }
-    if (job.progress_current <= 0 || job.progress_total <= 0) {
-      return `ca. ${formatDuration(initialSearchRuntimeEstimate(job))}`;
-    }
-    const fraction = Math.min(0.98, Math.max(0.05, job.progress_current / job.progress_total));
-    return `ca. ${formatDuration(Math.max(searchElapsedSeconds(), searchElapsedSeconds() / fraction))}`;
+  function formatEstimatedDuration(seconds: number) {
+    const clamped = Math.max(0, seconds);
+    if (clamped === 0) return formatDuration(0);
+    const step = clamped < 90 ? 5 : 15;
+    return formatDuration(Math.max(step, Math.round(clamped / step) * step));
   }
 
-  function estimatedRemainingRuntimeLabel(job: SearchJobResponse | null) {
-    if (!job) {
-      return `ca. ${formatDuration(initialSearchRuntimeEstimate(job) - searchElapsedSeconds())}`;
+  function estimatedTotalRuntimeLabel(job: SearchJobResponse | null, elapsedSeconds: number, estimateSeconds: number) {
+    if (job && terminalJobStatus(job.status)) {
+      return formatDuration(elapsedSeconds);
     }
-    if (terminalJobStatus(job.status)) {
+    const estimateWithOverrun = elapsedSeconds > estimateSeconds ? elapsedSeconds + 5 : estimateSeconds;
+    return `ca. ${formatEstimatedDuration(estimateWithOverrun)}`;
+  }
+
+  function estimatedRemainingRuntimeLabel(job: SearchJobResponse | null, elapsedSeconds: number, estimateSeconds: number) {
+    if (job && terminalJobStatus(job.status)) {
       return '0 s';
     }
-    if (job.progress_current <= 0 || job.progress_total <= 0) {
-      return `ca. ${formatDuration(initialSearchRuntimeEstimate(job) - searchElapsedSeconds())}`;
-    }
-    const fraction = Math.min(0.98, Math.max(0.05, job.progress_current / job.progress_total));
-    const total = searchElapsedSeconds() / fraction;
-    return `ca. ${formatDuration(total - searchElapsedSeconds())}`;
+    const remainingSeconds = estimateSeconds - elapsedSeconds;
+    if (remainingSeconds <= 0) return 'ca. < 5 s';
+    return `ca. ${formatEstimatedDuration(remainingSeconds)}`;
   }
 
   function initialSearchRuntimeEstimate(job: SearchJobResponse | null) {
     if (job?.mock_mode) return 8;
     const candidateBudget = Math.max(1, Math.min(maxCandidates, 100));
     return 20 + candidateBudget * 0.7;
+  }
+
+  function updateSearchRuntimeEstimate(job: SearchJobResponse | null) {
+    if (!job) {
+      searchRuntimeEstimateSeconds = initialSearchRuntimeEstimate(null);
+      searchRuntimeEstimateKey = '';
+      return;
+    }
+
+    const estimateKey = `${job.status}:${job.progress_current}:${job.progress_total}`;
+    if (estimateKey === searchRuntimeEstimateKey && !terminalJobStatus(job.status)) {
+      return;
+    }
+    searchRuntimeEstimateKey = estimateKey;
+
+    const baselineEstimate = initialSearchRuntimeEstimate(job);
+    const elapsedSeconds = calculateSearchElapsedSeconds(searchStartedAt, Date.now());
+    if (terminalJobStatus(job.status)) {
+      searchRuntimeEstimateSeconds = elapsedSeconds;
+      return;
+    }
+    if (elapsedSeconds < 2 || job.progress_current <= 0 || job.progress_total <= 0) {
+      searchRuntimeEstimateSeconds = baselineEstimate;
+      return;
+    }
+
+    const progressFraction = Math.min(0.95, Math.max(0.1, job.progress_current / job.progress_total));
+    const observedTotal = elapsedSeconds / progressFraction;
+    const blendedEstimate = baselineEstimate * 0.65 + observedTotal * 0.35;
+    searchRuntimeEstimateSeconds = Math.max(baselineEstimate * 0.75, Math.min(baselineEstimate * 1.75, blendedEstimate));
   }
 
   function startSearchTimer() {
@@ -417,6 +458,9 @@
   }
 
   function stopSearchTimer() {
+    if (searchStartedAt) {
+      searchNow = Date.now();
+    }
     if (searchTimer) {
       clearInterval(searchTimer);
       searchTimer = null;
@@ -427,6 +471,25 @@
     return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
   }
 
+  async function retryHistoryRequest<T>(request: () => Promise<T>, retryLabel: string) {
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= HISTORY_LOAD_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const response = await request();
+        historyHint = '';
+        return response;
+      } catch (error) {
+        lastError = error;
+        if (attempt >= HISTORY_LOAD_MAX_ATTEMPTS) {
+          break;
+        }
+        historyHint = `${retryLabel} (${attempt + 1}. Versuch).`;
+        await wait(HISTORY_LOAD_RETRY_MS);
+      }
+    }
+    throw lastError;
+  }
+
   async function pollSearchJob(jobId: string) {
     let latestJob = currentJob;
     let consecutivePollFailures = 0;
@@ -435,15 +498,14 @@
       try {
         latestJob = await fetchSearchJob(jobId);
         currentJob = latestJob;
+        updateSearchRuntimeEstimate(latestJob);
         consecutivePollFailures = 0;
         searchProgressHint = '';
       } catch {
         consecutivePollFailures += 1;
         if (consecutivePollFailures >= SEARCH_STATUS_MAX_POLL_FAILURES) {
-          searchProgressHint = '';
-          throw new Error(
-            'Der Suchjob-Status konnte nach mehreren Versuchen nicht aktualisiert werden. Der Suchjob läuft möglicherweise im Hintergrund weiter. Öffne den Suchverlauf später erneut.'
-          );
+          searchProgressHint = `Statusantwort seit ${consecutivePollFailures} Versuchen unterbrochen. NARATrace wartet weiter auf den laufenden Suchjob.`;
+          continue;
         }
         const attemptLabel = consecutivePollFailures > 1 ? ` (${consecutivePollFailures}. Versuch)` : '';
         searchProgressHint = `Statusantwort kurz unterbrochen${attemptLabel}. Der Suchjob läuft weiter.`;
@@ -642,6 +704,7 @@
     searchProgressHint = '';
     currentJob = null;
     currentResults = [];
+    updateSearchRuntimeEstimate(null);
     startSearchTimer();
     try {
       const startedJob = await startSearch({
@@ -657,9 +720,11 @@
         max_candidates: maxCandidates
       });
       currentJob = startedJob;
+      updateSearchRuntimeEstimate(startedJob);
       const finishedJob = terminalJobStatus(startedJob.status) ? startedJob : await pollSearchJob(startedJob.id);
       if (finishedJob) {
         currentJob = finishedJob;
+        updateSearchRuntimeEstimate(finishedJob);
       }
       if (currentJob && terminalJobStatus(currentJob.status)) {
         searchProgressHint = '';
@@ -688,9 +753,11 @@
   async function loadHistory() {
     historyLoading = true;
     historyError = '';
+    historyHint = '';
     try {
-      historyJobs = await fetchSearchHistory();
+      historyJobs = await retryHistoryRequest(fetchSearchHistory, 'Suchverläufe konnten kurz nicht geladen werden');
     } catch (error) {
+      historyHint = '';
       historyError = error instanceof Error ? error.message : 'Die Suchverläufe konnten nicht geladen werden.';
     } finally {
       historyLoading = false;
@@ -702,10 +769,15 @@
     selectedHistoryResults = [];
     historyResultsLoading = true;
     historyError = '';
+    historyHint = '';
     try {
-      const results = await fetchSearchResults(job.id);
+      const results = await retryHistoryRequest(
+        () => fetchSearchResults(job.id),
+        'Treffer konnten kurz nicht geladen werden'
+      );
       selectedHistoryResults = sortDisplayResults(results.map(displayResultFromResponse));
     } catch (error) {
+      historyHint = '';
       historyError = error instanceof Error ? error.message : 'Die Treffer konnten nicht geladen werden.';
     } finally {
       historyResultsLoading = false;
@@ -1068,15 +1140,15 @@
                 <small>Aktueller Fortschritt</small>
               </span>
               <span>
-                <strong>{estimatedTotalRuntimeLabel(currentJob)}</strong>
+                <strong>{currentEstimatedTotalRuntimeLabel}</strong>
                 <small>Voraussichtliche Laufzeit</small>
               </span>
               <span>
-                <strong>{estimatedRemainingRuntimeLabel(currentJob)}</strong>
+                <strong>{currentEstimatedRemainingRuntimeLabel}</strong>
                 <small>Restzeit</small>
               </span>
               <span>
-                <strong>{formatDuration(searchElapsedSeconds())}</strong>
+                <strong>{formatDuration(currentSearchElapsedSeconds)}</strong>
                 <small>Suchlaufzeit</small>
               </span>
             </div>
@@ -1116,15 +1188,15 @@
                 <small>Fortschritt</small>
               </span>
               <span>
-                <strong>{estimatedRemainingRuntimeLabel(currentJob)}</strong>
+                <strong>{currentEstimatedRemainingRuntimeLabel}</strong>
                 <small>Restzeit</small>
               </span>
               <span>
-                <strong>{estimatedTotalRuntimeLabel(currentJob)}</strong>
+                <strong>{currentEstimatedTotalRuntimeLabel}</strong>
                 <small>Erwartete Gesamtzeit</small>
               </span>
               <span>
-                <strong>{formatDuration(searchElapsedSeconds())}</strong>
+                <strong>{formatDuration(currentSearchElapsedSeconds)}</strong>
                 <small>Bisherige Laufzeit</small>
               </span>
             </div>
@@ -1335,6 +1407,9 @@
           {historyLoading ? 'Aktualisiere...' : 'Aktualisieren'}
         </button>
       </div>
+      {#if historyHint}
+        <p class="notice">{historyHint}</p>
+      {/if}
       {#if historyError}
         <p class="error">{historyError}</p>
       {/if}

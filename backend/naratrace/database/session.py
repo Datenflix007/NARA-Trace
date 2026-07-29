@@ -16,7 +16,7 @@ _session_factory: sessionmaker[Session] | None = None
 def configure_database(database_url: str | None = None) -> Engine:
     global _engine, _session_factory
     database_url = database_url or get_default_database_url()
-    connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
+    connect_args = {"check_same_thread": False, "timeout": 30.0} if database_url.startswith("sqlite") else {}
     _engine = create_engine(database_url, connect_args=connect_args, future=True)
     _session_factory = sessionmaker(bind=_engine, autoflush=False, autocommit=False, expire_on_commit=False)
     return _engine
@@ -27,6 +27,9 @@ def set_sqlite_pragma(dbapi_connection, connection_record) -> None:  # type: ign
     cursor = dbapi_connection.cursor()
     try:
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
     finally:
         cursor.close()
 

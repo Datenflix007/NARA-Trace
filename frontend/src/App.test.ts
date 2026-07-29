@@ -78,6 +78,10 @@ function settingsResponse(overrides = {}) {
   };
 }
 
+function progressStatValue(label: string) {
+  return screen.getByText(label).parentElement?.querySelector('strong')?.textContent ?? '';
+}
+
 describe('App', () => {
   afterEach(() => {
     window.location.hash = '';
@@ -261,6 +265,16 @@ describe('App', () => {
     expect(screen.getByText('2 von 6 Schritten (33 %)')).toBeTruthy();
     expect(screen.getByText('Restzeit')).toBeTruthy();
     expect(screen.getByText('Voraussichtliche Laufzeit')).toBeTruthy();
+    expect(progressStatValue('Voraussichtliche Laufzeit')).toBe('ca. 55 s');
+    expect(progressStatValue('Suchlaufzeit')).toBe('0 s');
+
+    await waitFor(
+      () => {
+        expect(progressStatValue('Suchlaufzeit')).toBe('1 s');
+      },
+      { timeout: 1800 }
+    );
+    expect(progressStatValue('Voraussichtliche Laufzeit')).toBe('ca. 55 s');
 
     await waitFor(
       () => {
@@ -278,7 +292,8 @@ describe('App', () => {
     );
   });
 
-  it('beendet die Live-Ladeanzeige deterministisch bei dauerhaft unterbrochenem Status', async () => {
+  it('wartet bei laenger unterbrochenem Status weiter und zeigt danach Treffer', async () => {
+    let stalledStatusCalls = 0;
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = String(input);
       if (url === '/api/settings') {
@@ -303,10 +318,35 @@ describe('App', () => {
         );
       }
       if (url === '/api/search/job-stalled') {
-        return new Response(JSON.stringify({ detail: 'Status nicht erreichbar' }), {
-          status: 503,
-          headers: { 'Content-Type': 'application/json' }
-        });
+        stalledStatusCalls += 1;
+        if (stalledStatusCalls <= 6) {
+          return new Response(JSON.stringify({ detail: 'Status nicht erreichbar' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        return new Response(
+          JSON.stringify(searchJob({ id: 'job-stalled', progress_current: 6, progress_total: 6, result_count: 1 })),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url === '/api/search/job-stalled/results') {
+        return new Response(
+          JSON.stringify([
+            localResult({
+              id: 12,
+              job_id: 'job-stalled',
+              naid: '123456',
+              title: 'NARA-Ergebnis nach Statusunterbrechung',
+              data_source: 'NARA',
+              source_page_url: '/api/pages/12/image',
+              source_page_label: 'NARA-Ergebnis nach Statusunterbrechung, Objekt/Seite 1',
+              transcript_text: 'OCR Volltext nach Unterbrechung',
+              transcript_source: 'NARA Extracted Text'
+            })
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
       }
       return new Response('{}', { status: 404 });
     });
@@ -320,16 +360,21 @@ describe('App', () => {
     await waitFor(
       () => {
         expect(
-          screen.getByText(
-            'Der Suchjob-Status konnte nach mehreren Versuchen nicht aktualisiert werden. Der Suchjob läuft möglicherweise im Hintergrund weiter. Öffne den Suchverlauf später erneut.'
-          )
+          screen.getByText('Statusantwort seit 5 Versuchen unterbrochen. NARATrace wartet weiter auf den laufenden Suchjob.')
         ).toBeTruthy();
       },
       { timeout: 7000 }
     );
-    expect(screen.queryByLabelText('Suchfortschritt')).toBeNull();
-    expect(screen.getByText('4 von 6 Schritten (67 %)')).toBeTruthy();
-  });
+    expect(screen.queryByText(/Der Suchjob-Status konnte nach mehreren Versuchen/)).toBeNull();
+
+    await waitFor(
+      () => {
+        expect(screen.getByRole('heading', { name: 'NARA-Ergebnis nach Statusunterbrechung, Objekt/Seite 1' })).toBeTruthy();
+      },
+      { timeout: 4000 }
+    );
+    expect(screen.getByText('Suche abgeschlossen')).toBeTruthy();
+  }, 11000);
 
   it('zeigt Treffer einer neuen Suche direkt als Original-und-Transkript-Karte', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
@@ -443,13 +488,29 @@ describe('App', () => {
     expect(screen.queryByText('Kein lokales Originalbild')).toBeNull();
   });
 
-  it('öffnet im Suchverlauf einen Job und sortiert Treffer nach Wahrscheinlichkeit', async () => {
+  it('öffnet im Suchverlauf einen Job nach kurzem Ladefehler und sortiert Treffer nach Wahrscheinlichkeit', async () => {
+    let historyCalls = 0;
+    let historyResultCalls = 0;
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
       if (url === '/api/search') {
+        historyCalls += 1;
+        if (historyCalls === 1) {
+          return new Response(JSON.stringify({ detail: 'kurz nicht erreichbar' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
         return new Response(JSON.stringify([searchJob()]), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
       if (url === '/api/search/job-1/results') {
+        historyResultCalls += 1;
+        if (historyResultCalls === 1) {
+          return new Response(JSON.stringify({ detail: 'kurz nicht erreichbar' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
         return new Response(
           JSON.stringify([
             localResult({ id: 2, match_score: 34, suspected_person_name: 'Niedriger Treffer', title: 'Niedriger Treffer' }),
@@ -465,13 +526,21 @@ describe('App', () => {
 
     await fireEvent.click(screen.getByRole('link', { name: 'Suchverläufe' }));
     await waitFor(() => {
+      expect(screen.getByText('Suchverläufe konnten kurz nicht geladen werden (2. Versuch).')).toBeTruthy();
+    });
+    await waitFor(() => {
       expect(screen.getByRole('button', { name: /complete · 2 Treffer/ })).toBeTruthy();
     });
+    expect(screen.queryByText('Die Suchverläufe konnten nicht geladen werden.')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: /complete · 2 Treffer/ }));
 
     await waitFor(() => {
+      expect(screen.getByText('Treffer konnten kurz nicht geladen werden (2. Versuch).')).toBeTruthy();
+    });
+    await waitFor(() => {
       expect(screen.getAllByText('Hoher Treffer').length).toBeGreaterThan(0);
     });
+    expect(screen.queryByText('Die Treffer konnten nicht geladen werden.')).toBeNull();
 
     const high = screen.getAllByText('Hoher Treffer')[0];
     const low = screen.getAllByText('Niedriger Treffer')[0];

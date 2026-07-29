@@ -308,6 +308,95 @@ async def test_create_search_job_with_api_key_stores_real_nara_candidates(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_search_job_commits_candidates_while_materialization_continues(tmp_path, monkeypatch):
+    isolate_nara_key(monkeypatch, tmp_path, api_key="test-key")
+    monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
+    reset_settings_cache()
+    reset_paths_cache()
+
+    async def fake_run_nara_candidate_search(payload, api_key):
+        return NaraSearchResponse(
+            total=2,
+            raw={"mocked": True},
+            items=[
+                NaraSearchItem(
+                    record=NaraRecord(
+                        naId=123456,
+                        title="Paul Schultze-Naumburg first record",
+                        description="Includes Naumburg and Mitgliedsnummer 347541.",
+                        recordGroupNumber="242",
+                        digitalObjects=[{"objectUrl": "https://catalog.archives.gov/object/first", "extractedText": "347541"}],
+                    ),
+                    raw={"_source": {"record": {"naId": 123456}}},
+                ),
+                NaraSearchItem(
+                    record=NaraRecord(
+                        naId=654321,
+                        title="Paul Schultze-Naumburg second record",
+                        description="Includes Weimar and 1869.",
+                        recordGroupNumber="242",
+                        digitalObjects=[{"objectUrl": "https://catalog.archives.gov/object/second", "extractedText": "Weimar 1869"}],
+                    ),
+                    raw={"_source": {"record": {"naId": 654321}}},
+                ),
+            ],
+        )
+
+    materialize_calls = 0
+    second_materialization_started = asyncio.Event()
+    release_second_materialization = asyncio.Event()
+
+    async def fake_materialize_best_page(job_id, naid, record, payload):
+        nonlocal materialize_calls
+        materialize_calls += 1
+        if materialize_calls == 2:
+            second_materialization_started.set()
+            await release_second_materialization.wait()
+        return MaterializedPage(
+            object_data=record.digitalObjects[0],
+            page_number=1,
+            image_url=f"https://catalog.archives.gov/object/{naid}.jpg",
+            local_path=None,
+            nara_text=record.digitalObjects[0]["extractedText"],
+            ocr_text=None,
+            ocr_engine=None,
+        )
+
+    monkeypatch.setattr("naratrace.processing.jobs.run_nara_candidate_search", fake_run_nara_candidate_search)
+    monkeypatch.setattr("naratrace.processing.jobs.materialize_best_page", fake_materialize_best_page)
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            create_response = await client.post(
+                "/api/search",
+                json={
+                    "first_name": "Paul",
+                    "last_name": "Schultze-Naumburg",
+                    "residence_places": "Naumburg, Weimar",
+                    "membership_number": "347.541",
+                    "max_candidates": 25,
+                },
+            )
+            assert create_response.status_code == 201
+            job = create_response.json()
+
+            await asyncio.wait_for(second_materialization_started.wait(), timeout=2)
+            running_response = await client.get(f"/api/search/{job['id']}")
+            assert running_response.status_code == 200
+            running_job = running_response.json()
+            assert running_job["status"] == "downloading_pages_ocr"
+            assert running_job["result_count"] == 1
+
+            release_second_materialization.set()
+            completed_job = await wait_for_terminal_job(client, job["id"])
+            assert completed_job["status"] == "complete"
+            assert completed_job["result_count"] == 2
+
+
+@pytest.mark.asyncio
 async def test_update_search_result_transcript_persists_manual_correction(tmp_path, monkeypatch):
     isolate_nara_key(monkeypatch, tmp_path, api_key="test-key")
     monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
