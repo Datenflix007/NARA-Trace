@@ -95,6 +95,8 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'NARATrace' })).toBeTruthy();
     expect(screen.getByText('NARA Catalog')).toBeTruthy();
     expect(screen.getByText('Anzeige-Beispiel')).toBeTruthy();
+    expect(screen.getByText('Recherche-Workflow')).toBeTruthy();
+    expect(screen.getByText('Bericht exportieren')).toBeTruthy();
     expect(screen.getByText('LOCAL-PDF-SCHULTZE-NAUMBURG-1931')).toBeTruthy();
     expect(screen.getByText('Wohnort: Naumburg; später Weimar')).toBeTruthy();
     expect(screen.getByAltText('Aktenfoto Paul Schultze-Naumburg').getAttribute('src')).toBe(
@@ -163,6 +165,71 @@ describe('App', () => {
 
     expect(screen.getByRole('heading', { name: 'Einstellungen' })).toBeTruthy();
     expect(screen.getByText('NARA API-Schlüssel')).toBeTruthy();
+    expect(screen.getByText(/Jeder Nutzer verwendet seinen eigenen NARA API-Schlüssel/)).toBeTruthy();
+    expect(screen.getByText(/Catalog_API@nara.gov/)).toBeTruthy();
+  });
+
+  it('zeigt im Methodik-Reiter Erklärung und Workflow-Schema', async () => {
+    render(App);
+
+    await fireEvent.click(screen.getByRole('link', { name: 'Methodik' }));
+
+    expect(screen.getByRole('heading', { name: 'Methodik' })).toBeTruthy();
+    expect(screen.getByText('Ähnlichkeit ist kein Identitätsnachweis')).toBeTruthy();
+    expect(screen.getByText('Von der Suchangabe zum prüfbaren Treffer')).toBeTruthy();
+    expect(screen.getByText('Suchprofil erfassen')).toBeTruthy();
+    expect(screen.getByText('Quellenprüfung')).toBeTruthy();
+    expect(screen.getByText('Was NARATrace nicht entscheidet')).toBeTruthy();
+  });
+
+  it('analysiert lokale Dokumente mit Vorschau, OCR und Prüfbegriffen', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/settings') {
+        return new Response(JSON.stringify(settingsResponse()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (url === '/api/local-documents' && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            id: 'local-1',
+            file_name: 'karte.png',
+            content_type: 'image/png',
+            size_bytes: 2048,
+            display_image_url: '/api/local-documents/local-1/image',
+            ocr_text: 'Paul Schultze-Naumburg\nMitgliedsnummer 347541\nWohnort Naumburg',
+            ocr_engine: 'Tesseract',
+            warnings: [],
+            stored_at: new Date().toISOString()
+          }),
+          { status: 201, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    render(App);
+
+    await fireEvent.click(screen.getByRole('link', { name: 'Lokale Dokumente' }));
+    await fireEvent.input(screen.getByLabelText('Prüfbegriffe'), { target: { value: 'Paul\n347541\nWeimar' } });
+    await fireEvent.change(screen.getByLabelText('Datei auswählen'), {
+      target: { files: [new File(['fake'], 'karte.png', { type: 'image/png' })] }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Dokument analysieren' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Lokales Dokument wurde analysiert.')).toBeTruthy();
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/local-documents',
+      expect.objectContaining({ method: 'POST', body: expect.any(FormData) })
+    );
+    expect(screen.getByAltText('Vorschau karte.png').getAttribute('src')).toBe('/api/local-documents/local-1/image');
+    expect(screen.getByDisplayValue(/Paul Schultze-Naumburg/)).toBeTruthy();
+    expect(screen.getAllByText('1 Fundstelle').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('Im OCR-Text nicht gefunden.')).toBeTruthy();
   });
 
   it('legt aus dem Suchformular einen Backend-Suchjob ohne Demo-Flag an', async () => {
@@ -236,6 +303,21 @@ describe('App', () => {
             headers: { 'Content-Type': 'application/json' }
           });
         }
+        if (progressStatusCalls === 2) {
+          return new Response(
+            JSON.stringify(
+              searchJob({
+                id: 'job-progress',
+                status: 'downloading_pages_ocr',
+                progress_current: 4,
+                progress_total: 6,
+                result_count: 0,
+                completed_at: null
+              })
+            ),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
         return new Response(JSON.stringify(searchJob({ id: 'job-progress', result_count: 0 })), {
           status: 200,
           headers: { 'Content-Type': 'application/json' }
@@ -285,10 +367,106 @@ describe('App', () => {
 
     await waitFor(
       () => {
+        expect(screen.getByText('Originalseiten werden geladen und OCR wird vorbereitet')).toBeTruthy();
+      },
+      { timeout: 2500 }
+    );
+    expect(screen.getByText('4 von 6 Schritten (67 %)')).toBeTruthy();
+    expect(progressStatValue('Voraussichtliche Laufzeit')).toBe('ca. 55 s');
+
+    await waitFor(
+      () => {
         expect(screen.getByText('Suche abgeschlossen')).toBeTruthy();
         expect(screen.getByText('6 von 6 Schritten (100 %)')).toBeTruthy();
       },
       { timeout: 4000 }
+    );
+  });
+
+  it('bricht einen laufenden Suchjob aus dem Ladepanel ab', async () => {
+    let cancelled = false;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/settings') {
+        return new Response(JSON.stringify(settingsResponse()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (url === '/api/search' && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify(
+            searchJob({
+              id: 'job-cancel',
+              status: 'searching_catalog',
+              progress_current: 2,
+              progress_total: 6,
+              result_count: 0,
+              completed_at: null
+            })
+          ),
+          { status: 201, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url === '/api/search/job-cancel/cancel' && init?.method === 'POST') {
+        cancelled = true;
+        return new Response(
+          JSON.stringify(
+            searchJob({
+              id: 'job-cancel',
+              status: 'cancelled',
+              progress_current: 2,
+              progress_total: 6,
+              result_count: 0,
+              completed_at: new Date().toISOString()
+            })
+          ),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url === '/api/search/job-cancel') {
+        return new Response(
+          JSON.stringify(
+            searchJob({
+              id: 'job-cancel',
+              status: cancelled ? 'cancelled' : 'searching_catalog',
+              progress_current: 2,
+              progress_total: 6,
+              result_count: 0,
+              completed_at: cancelled ? new Date().toISOString() : null
+            })
+          ),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url === '/api/search') {
+        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    render(App);
+
+    await fireEvent.click(screen.getByRole('link', { name: 'Neue Suche' }));
+    await fireEvent.input(screen.getByLabelText('Nachname'), { target: { value: 'Schultze-Naumburg' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Suchjob anlegen' }));
+
+    await screen.findByRole('button', { name: 'Suchjob abbrechen' });
+    await waitFor(() => {
+      expect((screen.getByRole('button', { name: 'Suchjob abbrechen' }) as HTMLButtonElement).disabled).toBe(false);
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Suchjob abbrechen' }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url, init]) => String(url) === '/api/search/job-cancel/cancel' && init?.method === 'POST')
+      ).toBe(true);
+    });
+    await waitFor(
+      () => {
+        expect(screen.getByText('Suchjob für "Schultze-Naumburg" wurde abgebrochen.')).toBeTruthy();
+      },
+      { timeout: 3000 }
     );
   });
 
@@ -529,10 +707,10 @@ describe('App', () => {
       expect(screen.getByText('Suchverläufe konnten kurz nicht geladen werden (2. Versuch).')).toBeTruthy();
     });
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /complete · 2 Treffer/ })).toBeTruthy();
+      expect(screen.getByRole('button', { name: /abgeschlossen · 2 Treffer/ })).toBeTruthy();
     });
     expect(screen.queryByText('Die Suchverläufe konnten nicht geladen werden.')).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: /complete · 2 Treffer/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /abgeschlossen · 2 Treffer/ }));
 
     await waitFor(() => {
       expect(screen.getByText('Treffer konnten kurz nicht geladen werden (2. Versuch).')).toBeTruthy();
@@ -540,11 +718,74 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getAllByText('Hoher Treffer').length).toBeGreaterThan(0);
     });
+    expect(screen.getByText('Ausgewählter Suchlauf')).toBeTruthy();
+    expect(screen.getByText('Nach Trefferwahrscheinlichkeit')).toBeTruthy();
     expect(screen.queryByText('Die Treffer konnten nicht geladen werden.')).toBeNull();
 
     const high = screen.getAllByText('Hoher Treffer')[0];
     const low = screen.getAllByText('Niedriger Treffer')[0];
     expect(Boolean(high.compareDocumentPosition(low) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  });
+
+  it('exportiert einen Suchverlauf als Markdown-Recherchebericht', async () => {
+    const createObjectURL = vi.fn(() => 'blob:naratrace-report');
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(window.URL, 'createObjectURL', { value: createObjectURL, configurable: true });
+    Object.defineProperty(window.URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true });
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/api/settings') {
+        return new Response(JSON.stringify(settingsResponse()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (url === '/api/search') {
+        return new Response(JSON.stringify([searchJob({ result_count: 1 })]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (url === '/api/search/job-1/results') {
+        return new Response(JSON.stringify([localResult({ id: 1, match_score: 96, title: 'Exportierbarer Treffer' })]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (url === '/api/search/job-1/export.md') {
+        return new Response('# NARATrace Recherchebericht', {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/markdown',
+            'Content-Disposition': 'attachment; filename="naratrace-recherchebericht.md"'
+          }
+        });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    render(App);
+
+    await fireEvent.click(screen.getByRole('link', { name: 'Suchverläufe' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /abgeschlossen · 1 Treffer/ })).toBeTruthy();
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /abgeschlossen · 1 Treffer/ }));
+    await waitFor(() => {
+      expect(screen.getByText('Exportierbarer Treffer')).toBeTruthy();
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Recherchebericht exportieren' }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/search/job-1/export.md');
+    });
+    await waitFor(() => {
+      expect(createObjectURL).toHaveBeenCalled();
+    });
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:naratrace-report');
+    expect(screen.getByText('Recherchebericht wurde erzeugt.')).toBeTruthy();
   });
 
   it('löscht im Suchverlauf einzelne Treffer und komplette Suchläufe', async () => {
@@ -576,9 +817,9 @@ describe('App', () => {
 
     await fireEvent.click(screen.getByRole('link', { name: 'Suchverläufe' }));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /complete · 1 Treffer/ })).toBeTruthy();
+      expect(screen.getByRole('button', { name: /abgeschlossen · 1 Treffer/ })).toBeTruthy();
     });
-    await fireEvent.click(screen.getByRole('button', { name: /complete · 1 Treffer/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /abgeschlossen · 1 Treffer/ }));
     await waitFor(() => {
       expect(screen.getByText('Löschbarer Treffer')).toBeTruthy();
     });
@@ -635,9 +876,9 @@ describe('App', () => {
 
     await fireEvent.click(screen.getByRole('link', { name: 'Suchverläufe' }));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /complete · 1 Treffer/ })).toBeTruthy();
+      expect(screen.getByRole('button', { name: /abgeschlossen · 1 Treffer/ })).toBeTruthy();
     });
-    await fireEvent.click(screen.getByRole('button', { name: /complete · 1 Treffer/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /abgeschlossen · 1 Treffer/ }));
     await waitFor(() => {
       expect(screen.getByText('NARA-Testkarte')).toBeTruthy();
     });

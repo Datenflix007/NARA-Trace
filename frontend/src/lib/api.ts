@@ -38,6 +38,18 @@ export type SearchJobResponse = {
   mock_mode: boolean;
 };
 
+export type LocalDocumentResponse = {
+  id: string;
+  file_name: string;
+  content_type: string | null;
+  size_bytes: number;
+  display_image_url: string | null;
+  ocr_text: string | null;
+  ocr_engine: string | null;
+  warnings: string[];
+  stored_at: string;
+};
+
 export type MatchEvidenceResponse = {
   kind: string;
   label: string;
@@ -98,6 +110,11 @@ export type ApiKeyTestResponse = {
   nara_api_usage: NaraApiUsageResponse | null;
 };
 
+export type SearchReportDownload = {
+  blob: Blob;
+  filename: string;
+};
+
 export async function fetchHealth(): Promise<HealthResponse> {
   const response = await fetch('/api/health');
   if (!response.ok) {
@@ -132,6 +149,49 @@ export async function fetchSearchJob(jobId: string): Promise<SearchJobResponse> 
   const response = await fetch(`/api/search/${jobId}`);
   if (!response.ok) {
     throw new Error('Der Suchjob-Status konnte nicht geladen werden.');
+  }
+  return response.json() as Promise<SearchJobResponse>;
+}
+
+export async function downloadSearchReport(jobId: string): Promise<SearchReportDownload> {
+  const response = await fetch(`/api/search/${jobId}/export.md`);
+  if (!response.ok) {
+    throw new Error('Der Recherchebericht konnte nicht erstellt werden.');
+  }
+  const disposition = response.headers.get('content-disposition') ?? '';
+  const match = /filename="([^"]+)"/.exec(disposition);
+  return {
+    blob: await response.blob(),
+    filename: match?.[1] ?? `naratrace-recherchebericht-${jobId}.md`
+  };
+}
+
+export async function uploadLocalDocument(file: File): Promise<LocalDocumentResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await fetch('/api/local-documents', {
+    method: 'POST',
+    body: formData
+  });
+  if (!response.ok) {
+    let message = 'Das lokale Dokument konnte nicht analysiert werden.';
+    try {
+      const payload = (await response.json()) as { detail?: unknown };
+      if (typeof payload.detail === 'string') {
+        message = payload.detail;
+      }
+    } catch {
+      // Keep the generic message when the server does not return JSON.
+    }
+    throw new Error(message);
+  }
+  return response.json() as Promise<LocalDocumentResponse>;
+}
+
+export async function cancelSearchJob(jobId: string): Promise<SearchJobResponse> {
+  const response = await fetch(`/api/search/${jobId}/cancel`, { method: 'POST' });
+  if (!response.ok) {
+    throw new Error('Der Suchjob konnte nicht abgebrochen werden.');
   }
   return response.json() as Promise<SearchJobResponse>;
 }

@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import mimetypes
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
 from fastapi.responses import FileResponse
 
 from naratrace import __version__
 from naratrace.api.schemas import (
     ApiKeyTestResponse,
     HealthResponse,
+    LocalDocumentResponse,
     NaraApiUsageResponse,
     SearchJobResponse,
     SearchRequest,
@@ -26,9 +27,12 @@ from naratrace.core.secrets import (
     get_nara_api_key_status,
     set_nara_api_key,
 )
+from naratrace.export.research_report import build_search_report_markdown
 from naratrace.nara.client import NaraCatalogClient, NaraClientError
 from naratrace.nara.usage import NaraApiUsage, get_nara_api_usage
+from naratrace.processing.local_documents import analyze_local_document_upload, get_local_document_image_path
 from naratrace.processing.jobs import (
+    cancel_search_job as cancel_running_search_job,
     create_search_job,
     delete_search_job,
     delete_search_result,
@@ -41,6 +45,24 @@ from naratrace.processing.jobs import (
 )
 
 api_router = APIRouter(prefix="/api")
+SEARCH_JOB_TASKS: dict[str, asyncio.Task[None]] = {}
+
+
+def schedule_search_job(job_id: str, payload: SearchRequest) -> None:
+    task = asyncio.create_task(run_search_job(job_id, payload))
+    SEARCH_JOB_TASKS[job_id] = task
+
+    def remove_finished_task(finished_task: asyncio.Task[None]) -> None:
+        if SEARCH_JOB_TASKS.get(job_id) is finished_task:
+            SEARCH_JOB_TASKS.pop(job_id, None)
+
+    task.add_done_callback(remove_finished_task)
+
+
+def cancel_search_task(job_id: str) -> None:
+    task = SEARCH_JOB_TASKS.get(job_id)
+    if task is not None and not task.done():
+        task.cancel()
 
 
 @api_router.get("/health", response_model=HealthResponse)
@@ -72,7 +94,7 @@ async def read_search_history() -> list[SearchJobResponse]:
 @api_router.post("/search", response_model=SearchJobResponse, status_code=status.HTTP_201_CREATED)
 async def start_search(payload: SearchRequest) -> SearchJobResponse:
     job = await create_search_job(payload)
-    asyncio.create_task(run_search_job(job.id, payload))
+    schedule_search_job(job.id, payload)
     return job
 
 
@@ -93,9 +115,10 @@ async def remove_search_job(job_id: str) -> Response:
 
 @api_router.post("/search/{job_id}/cancel", response_model=SearchJobResponse)
 async def cancel_search_job(job_id: str) -> SearchJobResponse:
-    job = get_search_job(job_id)
+    job = cancel_running_search_job(job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suchjob wurde nicht gefunden.")
+    cancel_search_task(job_id)
     return job
 
 
@@ -107,11 +130,41 @@ async def read_search_results(job_id: str) -> list[SearchResultResponse]:
     return results
 
 
+@api_router.get("/search/{job_id}/export.md")
+async def export_search_report(job_id: str) -> Response:
+    report = build_search_report_markdown(job_id)
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suchjob wurde nicht gefunden.")
+    filename, content = report
+    return Response(
+        content=content,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @api_router.delete("/search/{job_id}/results/{result_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_search_result(job_id: str, result_id: int) -> Response:
     if not delete_search_result(job_id, result_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Treffer wurde nicht gefunden.")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@api_router.post("/local-documents", response_model=LocalDocumentResponse, status_code=status.HTTP_201_CREATED)
+async def analyze_local_document(file: UploadFile = File(...)) -> LocalDocumentResponse:
+    content = await file.read()
+    try:
+        return analyze_local_document_upload(file.filename, file.content_type, content)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@api_router.get("/local-documents/{document_id}/image")
+async def read_local_document_image(document_id: str) -> FileResponse:
+    image_path = get_local_document_image_path(document_id)
+    if image_path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lokale Dokumentvorschau wurde nicht gefunden.")
+    return FileResponse(image_path, media_type=mimetypes.guess_type(image_path.name)[0])
 
 
 @api_router.patch("/search/{job_id}/results/{result_id}/transcript", response_model=SearchResultResponse)

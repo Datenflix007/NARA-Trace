@@ -195,6 +195,42 @@ async def test_create_search_job_with_demo_mode_returns_mock_results_without_api
 
 
 @pytest.mark.asyncio
+async def test_search_job_export_returns_research_markdown(tmp_path, monkeypatch):
+    monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("NARA_API_KEY", raising=False)
+    monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
+    reset_settings_cache()
+    reset_paths_cache()
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            create_response = await client.post(
+                "/api/search",
+                json={
+                    "first_name": "Paul",
+                    "last_name": "Schultze-Naumburg",
+                    "membership_number": "347.541",
+                    "demo_mode": True,
+                },
+            )
+            job = await wait_for_terminal_job(client, create_response.json()["id"])
+
+            export_response = await client.get(f"/api/search/{job['id']}/export.md")
+
+            assert export_response.status_code == 200
+            assert export_response.headers["content-type"].startswith("text/markdown")
+            assert "attachment;" in export_response.headers["content-disposition"]
+            report = export_response.text
+            assert "# NARATrace Recherchebericht: Paul Schultze-Naumburg" in report
+            assert "## Suchprofil" in report
+            assert "## Treffer" in report
+            assert "LOCAL-PDF-SCHULTZE-NAUMBURG-1931" in report
+            assert "NARATrace ist ein unabhängiges, inoffizielles Forschungswerkzeug" in report
+
+
+@pytest.mark.asyncio
 async def test_delete_search_result_and_search_job(tmp_path, monkeypatch):
     monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("NARA_API_KEY", raising=False)
@@ -394,6 +430,83 @@ async def test_search_job_commits_candidates_while_materialization_continues(tmp
             completed_job = await wait_for_terminal_job(client, job["id"])
             assert completed_job["status"] == "complete"
             assert completed_job["result_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_cancel_search_job_keeps_background_task_cancelled(tmp_path, monkeypatch):
+    isolate_nara_key(monkeypatch, tmp_path, api_key="test-key")
+    monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
+    reset_settings_cache()
+    reset_paths_cache()
+
+    async def fake_run_nara_candidate_search(payload, api_key):
+        return NaraSearchResponse(
+            total=1,
+            raw={"mocked": True},
+            items=[
+                NaraSearchItem(
+                    record=NaraRecord(
+                        naId=123456,
+                        title="Paul Schultze-Naumburg cancellable record",
+                        description="Includes Naumburg and Mitgliedsnummer 347541.",
+                        recordGroupNumber="242",
+                        digitalObjects=[{"objectUrl": "https://catalog.archives.gov/object/cancel", "extractedText": "347541"}],
+                    ),
+                    raw={"_source": {"record": {"naId": 123456}}},
+                )
+            ],
+        )
+
+    materialization_started = asyncio.Event()
+    materialization_cancelled = asyncio.Event()
+    release_materialization = asyncio.Event()
+
+    async def fake_materialize_best_page(job_id, naid, record, payload):
+        materialization_started.set()
+        try:
+            await release_materialization.wait()
+        except asyncio.CancelledError:
+            materialization_cancelled.set()
+            raise
+        return MaterializedPage(
+            object_data=record.digitalObjects[0],
+            page_number=1,
+            image_url="https://catalog.archives.gov/object/cancel.jpg",
+            local_path=None,
+            nara_text="Paul Schultze-Naumburg 347541",
+            ocr_text=None,
+            ocr_engine=None,
+        )
+
+    monkeypatch.setattr("naratrace.processing.jobs.run_nara_candidate_search", fake_run_nara_candidate_search)
+    monkeypatch.setattr("naratrace.processing.jobs.materialize_best_page", fake_materialize_best_page)
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            create_response = await client.post(
+                "/api/search",
+                json={"first_name": "Paul", "last_name": "Schultze-Naumburg", "max_candidates": 10},
+            )
+            assert create_response.status_code == 201
+            job = create_response.json()
+
+            await asyncio.wait_for(materialization_started.wait(), timeout=2)
+            cancel_response = await client.post(f"/api/search/{job['id']}/cancel")
+            assert cancel_response.status_code == 200
+            cancelled_job = cancel_response.json()
+            assert cancelled_job["status"] == "cancelled"
+
+            await asyncio.wait_for(materialization_cancelled.wait(), timeout=2)
+            release_materialization.set()
+            await asyncio.sleep(0.1)
+            final_response = await client.get(f"/api/search/{job['id']}")
+            assert final_response.status_code == 200
+            final_job = final_response.json()
+            assert final_job["status"] == "cancelled"
+            assert final_job["result_count"] == 0
 
 
 @pytest.mark.asyncio

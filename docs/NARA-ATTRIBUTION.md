@@ -16,3 +16,5 @@ Treffer und Detailansichten müssen mindestens enthalten:
 - Abrufdatum
 - Textquelle
 - Rechte- oder Nutzungshinweise, soweit vom Datensatz verfügbar
+
+Exportierte Rechercheberichte müssen dieselbe Trennung sichtbar machen: automatisch gerankte Treffer sind Forschungshinweise, keine gesicherten Identifizierungen. Persönliche API-Schlüssel dürfen nicht in Berichte, Suchverläufe, Screenshots, Logs oder lokale Exporte geschrieben werden.

@@ -1,43 +1,88 @@
 # NARATrace
 
-Lokale, quellennahe Personensuche im National Archives Catalog.
+Lokale, quellennahe Personensuche und Dokumentprüfung für historische Arbeit mit dem National Archives Catalog.
 
-NARATrace ist ein unabhängiges, inoffizielles Forschungswerkzeug für historische Archivarbeit mit digitalisierten Beständen der U.S. National Archives and Records Administration (NARA). Die Anwendung läuft lokal auf dem Rechner des Benutzers. Es gibt kein Cloud-Backend, keine Telemetrie und kein GitHub-Pages-Deployment.
+NARATrace ist ein unabhängiges, inoffizielles Forschungswerkzeug für digitalisierte Bestände der U.S. National Archives and Records Administration (NARA). Die Anwendung läuft lokal auf dem Rechner des Benutzers. Es gibt kein Cloud-Backend, keine Telemetrie und kein GitHub-Pages-Deployment.
 
-![1784997630941](image/README/1784997630941.png)
+Automatische Treffer sind Forschungshinweise und keine gesicherten Identifizierungen.
 
-![1784997634200](image/README/1784997634200.png)
+## Screenshots
 
-## Status
+### Startseite und Anzeige-Beispiel
 
-Dieses Repository befindet sich im ersten MVP-Aufbau. Aktuell vorhanden:
+Die Startseite zeigt direkt eine kompakte Demo-Trefferliste mit Quellenbadge, Trefferwahrscheinlichkeit und Personenfakten.
+Neue Nutzer sehen dort außerdem den Forschungsworkflow vom eigenen API-Schlüssel bis zum exportierbaren Recherchebericht.
 
-- lokale Backend-Grundstruktur mit FastAPI
-- lokales Datenverzeichnis über `platformdirs`
-- SQLite-Initialisierung über Alembic
-- Health-Endpunkt unter `/api/health`
-- lokaler Launcher für `python -m naratrace`
-- Start-, Build- und Test-Skripte
-- Svelte/Vite-Oberfläche mit Navigation, Suche, Einstellungen, Suchverlauf und Demo-Ergebnissen
+![Startseite mit Anzeige-Beispiel](docs/screenshots/01-start.png)
+
+### Neue Suche
+
+Das Suchformular erfasst Namen, Varianten, Lebensdaten, Orte, Mitgliedsnummern und archivische Eingrenzungen. Suchjobs laufen im Hintergrund, zeigen Fortschritt und können abgebrochen werden.
+
+![Suchformular mit ausgefülltem Suchprofil](docs/screenshots/02-search-form.png)
+
+### Lokale Dokumente
+
+Lokale PDF-, Bild- und TIFF-Dateien können lokal analysiert werden. NARATrace erzeugt eine Browser-Vorschau, führt OCR aus und markiert Prüfbegriffe mit Fundstellen.
+
+![Lokale Dokumentanalyse mit Vorschau und OCR](docs/screenshots/03-local-documents.png)
+
+### Methodik
+
+Der Methodik-Reiter erklärt den Workflow von Suchprofil über Kandidatenabruf und OCR bis zur quellenkritischen Prüfung.
+
+![Methodik-Reiter mit Workflow-Schema](docs/screenshots/04-methodology.png)
+
+## Funktionsumfang
+
+- lokale FastAPI-Anwendung mit Svelte/Vite-Frontend
+- lokale SQLite-Datenbank über Alembic
+- NARA Catalog API v2 mit lokal gespeichertem API-Schlüssel
+- asynchrone Suchjobs mit Fortschritt, Laufzeit, Restzeit und Abbruch
+- gerankte Trefferlisten mit Evidenzhinweisen
+- Suchverläufe mit lokal gespeicherten Treffern
+- Markdown-Rechercheberichte mit Suchprofil, Abfragen, Treffer- und Evidenzdokumentation
+- Originalseitenanzeige mit TIFF-zu-JPEG-Konvertierung für den Browser
+- Transkriptansicht und manuelle Transkriptkorrektur
+- lokale Dokumentanalyse für PDF, PNG, JPEG, TIFF, WebP und GIF
+- lokale OCR mit Tesseract, falls auf dem System verfügbar
+- Methodikseite mit Workflow-Schema und Grenzen der automatischen Bewertung
 
 ## Datenquelle
 
-Datenquelle: U.S. National Archives and Records Administration - National Archives Catalog.
+Datenquelle ist die U.S. National Archives and Records Administration - National Archives Catalog.
 
-NARATrace verwendet die National Archives Catalog API v2, sobald ein persönlicher API-Schlüssel gespeichert ist. Echte Suchergebnisse dürfen nicht erfunden werden. Ein ausdrücklich gekennzeichneter Demo-/Mock-Modus ist für Entwicklung und Demonstration vorgesehen.
+NARATrace verwendet die National Archives Catalog API v2, sobald ein persönlicher API-Schlüssel gespeichert ist. Echte Suchergebnisse dürfen nicht erfunden werden. Demo- und Mock-Daten sind ausdrücklich gekennzeichnet.
+
+Die offizielle API-Dokumentation liegt unter:
+
+```text
+https://catalog.archives.gov/api/v2/api-docs/
+```
+
+Einen API-Schlüssel fordert man laut NARA über `Catalog_API@nara.gov` an.
 
 ## Lokaler Start
 
 Voraussetzungen:
 
 - Python 3.11 oder neuer
-- Node.js 22 oder neuer für das Frontend
-- Tesseract OCR für spätere lokale OCR-Funktionen
+- Node.js 22 oder neuer
+- Tesseract OCR, wenn lokale OCR genutzt werden soll
 
 Backend installieren:
 
 ```powershell
 python -m pip install -e .\backend[test]
+```
+
+Frontend bauen:
+
+```powershell
+cd frontend
+npm install
+npm run build
+cd ..
 ```
 
 Anwendung starten:
@@ -46,9 +91,9 @@ Anwendung starten:
 python -m naratrace
 ```
 
-Der Server bindet standardmäßig nur an `127.0.0.1` und verwendet Port `8765`. Beim Start wird der Standardbrowser mit `http://127.0.0.1:8765` geöffnet.
+Der Server bindet standardmäßig nur an `127.0.0.1` und verwendet Port `8765`.
 
-Falls Port `8765` auf deinem Rechner belegt ist, starte NARATrace auf dem bereits getesteten Ausweichport:
+Falls der Port belegt ist:
 
 ```powershell
 python -m naratrace --port 8766
@@ -60,33 +105,28 @@ Ohne Browserstart:
 python -m naratrace --no-browser
 ```
 
-Entwicklungsstart per Skript:
+Windows-Schnellstart:
 
 ```powershell
-.\scripts\dev.ps1
+.\quickstart.bat
 ```
 
-## Anzeige-Beispiel
+Das Batch-Skript baut das Frontend und startet NARATrace auf Port `8766`.
 
-Die Startseite zeigt direkt ein Anzeige-Beispiel mit gerankten Treffern. Der erste Treffer ist als `LOCAL` markiert und verwendet die lokale Datei:
+## API-Schlüssel
 
-```text
-C:\Users\festa\Downloads\SchulzeNaumburg_NSDAP_Kartei1931.pdf
-```
+Der NARA-API-Schlüssel wird lokal im Betriebssystem-Keyring gespeichert:
 
-Die weiteren Vergleichstreffer sind als `MOCK` markiert. Aus dem Anzeige-Beispiel öffnet sich die Detailansicht mit Originalseite links und Transkript rechts.
+- Service: `NARATrace`
+- Account: `nara-api-key`
 
-Die Demo-Bilder liegen im Repository unter:
+Für Entwicklung ist alternativ die Umgebungsvariable `NARA_API_KEY` vorgesehen. Der Schlüssel darf nicht in SQLite, Browser Local Storage, Frontend-Code, Logs, Tests, Git-Commits oder Exporte geschrieben werden.
 
-```text
-frontend/public/demo/
-```
+In der Oberfläche unter `Einstellungen` kann der Schlüssel lokal gespeichert, getestet und gelöscht werden. Ohne gültigen persönlichen NARA API-Schlüssel kann NARATrace keine echten Treffer aus dem National Archives Catalog abrufen.
 
-Beim Build werden sie nach `frontend/dist/demo/` kopiert und vom Backend unter `/demo/...` ausgeliefert.
+Siehe `.env.example` für lokale Entwicklungsvariablen ohne echte Geheimnisse.
 
-## Suchverläufe
-
-Unter `Suchverläufe` können gespeicherte Suchläufe geöffnet werden. Treffer werden nach Trefferwahrscheinlichkeit sortiert angezeigt. Einzelne Treffer und komplette Suchläufe können dort gelöscht werden.
+Eine kompakte Anleitung für neue Nutzer liegt unter [docs/USER-GUIDE.md](docs/USER-GUIDE.md).
 
 ## Lokale Daten
 
@@ -109,43 +149,37 @@ Darin werden angelegt:
 
 Für Entwicklung und Tests kann das Datenverzeichnis mit `NARATRACE_DATA_DIR` überschrieben werden.
 
-## API-Schlüssel
+## Methodik und Quellenkritik
 
-Der NARA-API-Schlüssel wird später bevorzugt im Betriebssystem-Keyring gespeichert:
+NARATrace darf keine Person allein aufgrund eines ähnlichen Namens sicher identifizieren. Das Ranking kombiniert Namen, Varianten, Orte, Lebensdaten, Mitgliedsnummern, Metadaten, NARA Extracted Text und lokale OCR. Je mehr unabhängige Merkmale konsistent zusammenpassen, desto plausibler wird ein Treffer.
 
-- Service: `NARATrace`
-- Account: `nara-api-key`
+Weitere Notizen:
 
-Für Entwicklung ist die Umgebungsvariable `NARA_API_KEY` vorgesehen. Der Schlüssel darf nicht in SQLite, Browser Local Storage, Frontend-Code, Logs, Tests, Git-Commits oder Exporte geschrieben werden.
-
-In der Oberfläche unter `Einstellungen` kann der Schlüssel lokal gespeichert, getestet und gelöscht werden. Ohne gültigen persönlichen NARA API-Schlüssel kann NARATrace keine echten Treffer aus dem National Archives Catalog abrufen.
-
-Einen API-Schlüssel fordert man laut NARA über `Catalog_API@nara.gov` an. Die offizielle API-Dokumentation liegt unter:
-
-```text
-https://catalog.archives.gov/api/v2/api-docs/
-```
-
-Siehe `.env.example` für lokale Entwicklungsvariablen ohne echte Geheimnisse.
+- [Nutzeranleitung](docs/USER-GUIDE.md)
+- [Suchmethodik](docs/SEARCH-METHODOLOGY.md)
+- [NARA-Attribution](docs/NARA-ATTRIBUTION.md)
 
 ## Tests
 
-Backend:
+Kompletter Projekttest:
 
 ```powershell
 .\scripts\test.ps1
 ```
 
-Direkt:
+Backend direkt:
 
 ```powershell
 python -m pytest .\backend\tests
 ```
 
-Das Projekttestskript installiert das Backend im Editable-Modus und führt Backend- sowie Frontend-Tests aus.
+Frontend direkt:
+
+```powershell
+cd frontend
+npm run test -- --run
+```
 
 ## Grenzen
 
-Automatische Treffer in NARATrace sind Forschungshinweise und keine gesicherten Identifizierungen. OCR-Text kann fehlerhaft sein. Archivische Metadaten, Rechtehinweise und Zitierweisen müssen für wissenschaftliche Nutzung am Originaldatensatz geprüft werden.
-
-NARATrace ist ein unabhängiges, inoffizielles Forschungswerkzeug. Es steht nicht in Verbindung mit der U.S. National Archives and Records Administration und wird nicht von NARA betrieben oder unterstützt.
+OCR-Text kann fehlerhaft sein. Archivische Metadaten, Rechtehinweise und Zitierweisen müssen für wissenschaftliche Nutzung am Originaldatensatz geprüft werden. NARATrace ist ein unabhängiges, inoffizielles Forschungswerkzeug. Es steht nicht in Verbindung mit NARA und wird nicht von NARA betrieben oder unterstützt.

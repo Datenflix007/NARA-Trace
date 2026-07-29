@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import {
+    cancelSearchJob,
     deleteSearchJob,
     deleteSearchResult,
     deleteNaraApiKey,
+    downloadSearchReport,
     fetchHealth,
     fetchSearchHistory,
     fetchSearchJob,
@@ -13,8 +15,10 @@
     startSearch,
     testNaraApiKey,
     updateSearchResultTranscript,
+    uploadLocalDocument,
     type ApiKeyTestResponse,
     type HealthResponse,
+    type LocalDocumentResponse,
     type NaraApiUsageResponse,
     type SearchJobResponse,
     type SearchResultResponse,
@@ -56,6 +60,12 @@
     transcriptSource: string;
     transcriptEdited: boolean;
     evidence: string[];
+  };
+
+  type LocalDocumentMatch = {
+    term: string;
+    count: number;
+    snippets: string[];
   };
 
   const navItems: { id: Exclude<RouteId, 'result-detail'>; label: string }[] = [
@@ -226,7 +236,7 @@
   let searchNow = Date.now();
   let searchTimer: ReturnType<typeof setInterval> | null = null;
   let searchRuntimeEstimateSeconds = 0;
-  let searchRuntimeEstimateKey = '';
+  let searchCancelling = false;
   let currentJob: SearchJobResponse | null = null;
   let currentResults: DisplayResult[] = [];
   let historyJobs: SearchJobResponse[] = [];
@@ -238,6 +248,15 @@
   let deletingResultId: number | null = null;
   let historyError = '';
   let historyHint = '';
+  let exportingJobId = '';
+  let exportNotice = '';
+  let exportError = '';
+  let localDocumentFile: File | null = null;
+  let localDocumentTerms = '';
+  let localDocumentResult: LocalDocumentResponse | null = null;
+  let localDocumentLoading = false;
+  let localDocumentError = '';
+  let localDocumentNotice = '';
   let settings: SettingsResponse | null = null;
   let settingsLoading = false;
   let settingsError = '';
@@ -271,6 +290,7 @@
     currentSearchElapsedSeconds,
     searchRuntimeEstimateSeconds
   );
+  $: localDocumentMatches = buildLocalDocumentMatches(localDocumentResult, localDocumentTerms);
   $: currentSearchSubmitLabel = searchLoading ? (currentJob ? 'Suchjob läuft...' : 'Lege Suchjob an...') : 'Suchjob anlegen';
 
   onMount(() => {
@@ -301,6 +321,8 @@
 
   function navigate(event: MouseEvent, route: Exclude<RouteId, 'result-detail'>) {
     event.preventDefault();
+    exportNotice = '';
+    exportError = '';
     activeRoute = route;
     window.location.hash = route;
     if (route === 'history') {
@@ -394,11 +416,7 @@
   }
 
   function estimatedTotalRuntimeLabel(job: SearchJobResponse | null, elapsedSeconds: number, estimateSeconds: number) {
-    if (job && terminalJobStatus(job.status)) {
-      return formatDuration(elapsedSeconds);
-    }
-    const estimateWithOverrun = elapsedSeconds > estimateSeconds ? elapsedSeconds + 5 : estimateSeconds;
-    return `ca. ${formatEstimatedDuration(estimateWithOverrun)}`;
+    return `ca. ${formatEstimatedDuration(estimateSeconds || initialSearchRuntimeEstimate(job))}`;
   }
 
   function estimatedRemainingRuntimeLabel(job: SearchJobResponse | null, elapsedSeconds: number, estimateSeconds: number) {
@@ -419,31 +437,11 @@
   function updateSearchRuntimeEstimate(job: SearchJobResponse | null) {
     if (!job) {
       searchRuntimeEstimateSeconds = initialSearchRuntimeEstimate(null);
-      searchRuntimeEstimateKey = '';
       return;
     }
-
-    const estimateKey = `${job.status}:${job.progress_current}:${job.progress_total}`;
-    if (estimateKey === searchRuntimeEstimateKey && !terminalJobStatus(job.status)) {
-      return;
+    if (searchRuntimeEstimateSeconds <= 0) {
+      searchRuntimeEstimateSeconds = initialSearchRuntimeEstimate(job);
     }
-    searchRuntimeEstimateKey = estimateKey;
-
-    const baselineEstimate = initialSearchRuntimeEstimate(job);
-    const elapsedSeconds = calculateSearchElapsedSeconds(searchStartedAt, Date.now());
-    if (terminalJobStatus(job.status)) {
-      searchRuntimeEstimateSeconds = elapsedSeconds;
-      return;
-    }
-    if (elapsedSeconds < 2 || job.progress_current <= 0 || job.progress_total <= 0) {
-      searchRuntimeEstimateSeconds = baselineEstimate;
-      return;
-    }
-
-    const progressFraction = Math.min(0.95, Math.max(0.1, job.progress_current / job.progress_total));
-    const observedTotal = elapsedSeconds / progressFraction;
-    const blendedEstimate = baselineEstimate * 0.65 + observedTotal * 0.35;
-    searchRuntimeEstimateSeconds = Math.max(baselineEstimate * 0.75, Math.min(baselineEstimate * 1.75, blendedEstimate));
   }
 
   function startSearchTimer() {
@@ -514,6 +512,51 @@
     return latestJob;
   }
 
+  async function cancelCurrentSearchJob() {
+    if (!currentJob || terminalJobStatus(currentJob.status) || searchCancelling) {
+      return;
+    }
+    searchCancelling = true;
+    searchError = '';
+    searchProgressHint = 'Suchjob wird abgebrochen...';
+    try {
+      const cancelledJob = await cancelSearchJob(currentJob.id);
+      currentJob = cancelledJob;
+      updateSearchRuntimeEstimate(cancelledJob);
+      searchProgressHint = 'Suchjob wurde abgebrochen.';
+    } catch (error) {
+      searchProgressHint = '';
+      searchError = error instanceof Error ? error.message : 'Der Suchjob konnte nicht abgebrochen werden.';
+    } finally {
+      searchCancelling = false;
+    }
+  }
+
+  async function downloadResearchReport(job: SearchJobResponse | null) {
+    if (!job || exportingJobId) {
+      return;
+    }
+    exportingJobId = job.id;
+    exportNotice = '';
+    exportError = '';
+    try {
+      const report = await downloadSearchReport(job.id);
+      const url = URL.createObjectURL(report.blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = report.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      exportNotice = 'Recherchebericht wurde erzeugt.';
+    } catch (error) {
+      exportError = error instanceof Error ? error.message : 'Der Recherchebericht konnte nicht erstellt werden.';
+    } finally {
+      exportingJobId = '';
+    }
+  }
+
   function initials(name: string) {
     return name
       .split(/\s+/)
@@ -528,6 +571,124 @@
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
     if (!match) return value;
     return `${match[3]}.${match[2]}.${match[1]}`;
+  }
+
+  function formatDateTime(value: string | null) {
+    if (!value) return 'nicht abgeschlossen';
+    return new Intl.DateTimeFormat('de-DE', {
+      dateStyle: 'short',
+      timeStyle: 'short'
+    }).format(new Date(value));
+  }
+
+  function jobStatusLabel(status: string) {
+    const labels: Record<string, string> = {
+      queued: 'wartet',
+      preparing_search: 'wird vorbereitet',
+      searching_catalog: 'NARA-Abfrage',
+      downloading_pages_ocr: 'Originalseiten/OCR',
+      ranking: 'Bewertung',
+      complete: 'abgeschlossen',
+      failed: 'fehlgeschlagen',
+      cancelled: 'abgebrochen'
+    };
+    return labels[status] ?? status;
+  }
+
+  function resultCountLabel(count: number) {
+    return count === 1 ? '1 Treffer' : `${count} Treffer`;
+  }
+
+  function historyProgressLabel(job: SearchJobResponse) {
+    if (job.progress_total <= 0) return jobStatusLabel(job.status);
+    return `${job.progress_current} von ${job.progress_total} Schritten`;
+  }
+
+  function formatFileSize(bytes: number) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1).replace('.', ',')} MB`;
+  }
+
+  function selectLocalDocumentFile(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    localDocumentFile = input.files?.[0] ?? null;
+    localDocumentError = '';
+    localDocumentNotice = localDocumentFile ? `${localDocumentFile.name} ausgewählt.` : '';
+  }
+
+  async function analyzeSelectedLocalDocument(event: SubmitEvent) {
+    event.preventDefault();
+    if (!localDocumentFile) {
+      localDocumentNotice = '';
+      localDocumentError = 'Bitte zuerst eine PDF- oder Bilddatei auswählen.';
+      return;
+    }
+    localDocumentLoading = true;
+    localDocumentError = '';
+    localDocumentNotice = '';
+    try {
+      localDocumentResult = await uploadLocalDocument(localDocumentFile);
+      localDocumentNotice = 'Lokales Dokument wurde analysiert.';
+    } catch (error) {
+      localDocumentResult = null;
+      localDocumentError = error instanceof Error ? error.message : 'Das lokale Dokument konnte nicht analysiert werden.';
+    } finally {
+      localDocumentLoading = false;
+    }
+  }
+
+  function localDocumentTermList(value: string) {
+    const seen = new Set<string>();
+    return value
+      .split(/[\n,;]+/)
+      .map((term) => term.trim())
+      .filter((term) => {
+        const key = term.toLocaleLowerCase('de-DE');
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
+
+  function buildLocalDocumentMatches(result: LocalDocumentResponse | null, termInput: string): LocalDocumentMatch[] {
+    const text = result?.ocr_text?.trim() ?? '';
+    if (!text) return [];
+    return localDocumentTermList(termInput).map((term) => ({
+      term,
+      count: countTermOccurrences(text, term),
+      snippets: snippetsForTerm(text, term)
+    }));
+  }
+
+  function countTermOccurrences(text: string, term: string) {
+    const haystack = text.toLocaleLowerCase('de-DE');
+    const needle = term.toLocaleLowerCase('de-DE');
+    if (!needle) return 0;
+    let count = 0;
+    let index = haystack.indexOf(needle);
+    while (index >= 0) {
+      count += 1;
+      index = haystack.indexOf(needle, index + needle.length);
+    }
+    return count;
+  }
+
+  function snippetsForTerm(text: string, term: string) {
+    const haystack = text.toLocaleLowerCase('de-DE');
+    const needle = term.toLocaleLowerCase('de-DE');
+    const snippets: string[] = [];
+    if (!needle) return snippets;
+    let index = haystack.indexOf(needle);
+    while (index >= 0 && snippets.length < 3) {
+      const start = Math.max(0, index - 48);
+      const end = Math.min(text.length, index + term.length + 72);
+      const prefix = start > 0 ? '...' : '';
+      const suffix = end < text.length ? '...' : '';
+      snippets.push(`${prefix}${text.slice(start, end).replace(/\s+/g, ' ').trim()}${suffix}`);
+      index = haystack.indexOf(needle, index + needle.length);
+    }
+    return snippets;
   }
 
   function displayResultFromResponse(result: SearchResultResponse): DisplayResult {
@@ -702,6 +863,7 @@
     searchNotice = '';
     searchError = '';
     searchProgressHint = '';
+    searchCancelling = false;
     currentJob = null;
     currentResults = [];
     updateSearchRuntimeEstimate(null);
@@ -746,6 +908,7 @@
       searchError = error instanceof Error ? error.message : 'Der Suchjob konnte nicht angelegt werden.';
     } finally {
       searchLoading = false;
+      searchCancelling = false;
       stopSearchTimer();
     }
   }
@@ -1030,6 +1193,48 @@
         </div>
       </section>
 
+      <section class="research-workflow" aria-label="Recherche-Workflow">
+        <div class="section-heading">
+          <span class="eyebrow">Recherche-Workflow</span>
+          <h2>Vom eigenen API-Schlüssel zum zitierfähigen Forschungsbericht</h2>
+        </div>
+        <div class="research-setup-strip">
+          <div>
+            <strong>{settings?.nara_api_key_configured ? 'Eigener NARA API-Schlüssel ist eingerichtet' : 'Eigener NARA API-Schlüssel fehlt noch'}</strong>
+            <span>
+              {#if settings?.nara_api_key_configured}
+                Quelle: {settings.nara_api_key_source}. Lokaler Zähler: {apiUsageLabel(settings.nara_api_usage)}.
+              {:else}
+                Speichere deinen persönlichen Schlüssel lokal im OS-Keyring, damit echte NARA-Treffer abgerufen werden können.
+              {/if}
+            </span>
+          </div>
+          <a class="button secondary" href="#settings" onclick={(event) => navigate(event, 'settings')}>API-Schlüssel verwalten</a>
+        </div>
+        <div class="workflow-cards">
+          <article>
+            <span>1</span>
+            <strong>Einrichten</strong>
+            <p>Eigenen NARA API-Schlüssel speichern und testen. Schlüssel werden nicht ins Repository oder Frontend geschrieben.</p>
+          </article>
+          <article>
+            <span>2</span>
+            <strong>Person suchen</strong>
+            <p>Suchprofil mit Varianten, Orten, Jahren und Identifikationsnummern anlegen. Der Suchjob läuft im Hintergrund.</p>
+          </article>
+          <article>
+            <span>3</span>
+            <strong>Quellen prüfen</strong>
+            <p>Treffer, Originalseite, OCR/Transkript und Evidenzen vergleichen. Korrekturen bleiben lokal nachvollziehbar.</p>
+          </article>
+          <article>
+            <span>4</span>
+            <strong>Bericht exportieren</strong>
+            <p>Suchverlauf als Markdown-Bericht mit Profil, Abfragen, Trefferliste, Evidenzen und Grenzen sichern.</p>
+          </article>
+        </div>
+      </section>
+
       {#if health}
         <section class="status-panel" aria-label="Backend-Status">
           <h2>Backend läuft</h2>
@@ -1152,6 +1357,16 @@
                 <small>Suchlaufzeit</small>
               </span>
             </div>
+            <div class="progress-actions">
+              <button
+                class="button secondary"
+                type="button"
+                disabled={!currentJob || searchCancelling || terminalJobStatus(currentJob.status)}
+                onclick={cancelCurrentSearchJob}
+              >
+                {searchCancelling ? 'Breche ab...' : 'Suchjob abbrechen'}
+              </button>
+            </div>
             {#if searchProgressHint}
               <p class="progress-hint">{searchProgressHint}</p>
             {/if}
@@ -1224,7 +1439,23 @@
               {/each}
             </div>
           {/if}
+          <div class="actions report-actions">
+            <button
+              class="button secondary"
+              type="button"
+              onclick={() => downloadResearchReport(currentJob)}
+              disabled={exportingJobId === currentJob.id}
+            >
+              {exportingJobId === currentJob.id ? 'Erzeuge Bericht...' : 'Recherchebericht exportieren'}
+            </button>
+          </div>
         </section>
+      {/if}
+      {#if exportNotice}
+        <p class="notice">{exportNotice}</p>
+      {/if}
+      {#if exportError}
+        <p class="error">{exportError}</p>
       {/if}
       {#if currentResults.length > 0}
         <section class="results" aria-label="Suchergebnisse">
@@ -1413,8 +1644,19 @@
       {#if historyError}
         <p class="error">{historyError}</p>
       {/if}
+      {#if exportNotice}
+        <p class="notice">{exportNotice}</p>
+      {/if}
+      {#if exportError}
+        <p class="error">{exportError}</p>
+      {/if}
       <div class="history-workspace">
         <section class="history-sidebar" aria-label="Gespeicherte Suchläufe">
+          <div class="history-sidebar-header">
+            <span class="eyebrow">Archiv</span>
+            <h2>Gespeicherte Suchläufe</h2>
+            <p>{historyJobs.length === 1 ? '1 lokaler Suchlauf' : `${historyJobs.length} lokale Suchläufe`}</p>
+          </div>
           {#if historyJobs.length > 0}
             {#each historyJobs as job}
               <article class="history-entry">
@@ -1424,9 +1666,9 @@
                   type="button"
                   onclick={() => openHistoryJob(job)}
                 >
-                  <span class="history-title">{job.title}</span>
-                  <span>{job.status} · {job.result_count} Treffer</span>
-                  <span>{new Date(job.created_at).toLocaleString('de-DE')}</span>
+                  <span class="history-title">{job.title ?? 'Unbenannter Suchlauf'}</span>
+                  <span class="history-meta-line">{jobStatusLabel(job.status)} · {resultCountLabel(job.result_count)}</span>
+                  <span>{formatDateTime(job.created_at)}</span>
                 </button>
                 <button
                   class="danger-button"
@@ -1450,156 +1692,62 @@
 
         <section class="history-results" aria-label="Treffer des Suchlaufs">
           {#if selectedHistoryJob}
-            <div class="section-heading">
-              <span class="eyebrow">Trefferliste</span>
-              <h2>{selectedHistoryJob.title}</h2>
+            <div class="history-detail-header">
+              <div class="section-heading">
+                <span class="eyebrow">Ausgewählter Suchlauf</span>
+                <h2>{selectedHistoryJob.title ?? 'Unbenannter Suchlauf'}</h2>
+              </div>
+              <div class="history-meta-grid" aria-label="Suchlauf-Metadaten">
+                <span>
+                  <strong>Status</strong>
+                  {jobStatusLabel(selectedHistoryJob.status)}
+                </span>
+                <span>
+                  <strong>Treffer</strong>
+                  {resultCountLabel(selectedHistoryJob.result_count)}
+                </span>
+                <span>
+                  <strong>Fortschritt</strong>
+                  {historyProgressLabel(selectedHistoryJob)}
+                </span>
+                <span>
+                  <strong>Gestartet</strong>
+                  {formatDateTime(selectedHistoryJob.created_at)}
+                </span>
+              </div>
+              <div class="actions report-actions">
+                <button
+                  class="button secondary"
+                  type="button"
+                  onclick={() => downloadResearchReport(selectedHistoryJob)}
+                  disabled={exportingJobId === selectedHistoryJob.id}
+                >
+                  {exportingJobId === selectedHistoryJob.id ? 'Erzeuge Bericht...' : 'Recherchebericht exportieren'}
+                </button>
+              </div>
             </div>
+
+            {#if selectedHistoryJob.error_message}
+              <p class="error compact-message">{selectedHistoryJob.error_message}</p>
+            {/if}
+            {#if selectedHistoryJob.warnings.length > 0}
+              <div class="warning-list history-warning-list" aria-label="Warnungen des Suchlaufs">
+                {#each selectedHistoryJob.warnings as warning}
+                  <p>{warning}</p>
+                {/each}
+              </div>
+            {/if}
+
             {#if historyResultsLoading}
               <p class="muted">Lade Treffer...</p>
             {:else if selectedHistoryResults.length > 0}
-              <div class="result-card-list">
+              <div class="section-heading history-results-heading">
+                <span class="eyebrow">Trefferliste</span>
+                <h2>Nach Trefferwahrscheinlichkeit</h2>
+              </div>
+              <div class="ranked-list history-ranked-list">
                 {#each selectedHistoryResults as result}
-                  <article class="result-card" aria-label={`Treffer ${result.name}`}>
-                    <div class="result-card-header">
-                      <div>
-                        <div class="match-topline">
-                          <span class={`source-badge ${sourceBadgeClass(result.dataSource)}`}>{result.dataSource}</span>
-                          <span class="score-pill">{scoreLabel(result.matchScore)}</span>
-                        </div>
-                        <h3>{result.name}</h3>
-                        <p>{result.category} · Trefferwahrscheinlichkeit {scoreLabel(result.matchScore)} · {result.naid}</p>
-                      </div>
-                      <button class="button secondary" type="button" onclick={() => openResultDetail(result, 'history')}>
-                        Vollansicht öffnen
-                      </button>
-                    </div>
-
-                    <div class="detail-shell inline-detail-shell">
-                      <section class="original-pane" aria-label={`Originalseite ${result.name}`}>
-                        <div class="section-heading">
-                          <span class="eyebrow">Originalseite</span>
-                          <h2>{result.sourcePageLabel}</h2>
-                        </div>
-                        {#if result.sourcePageUrl}
-                          <div class="document-stage">
-                            <img src={result.sourcePageUrl} alt={result.sourcePageLabel} />
-                            {#each result.lines as line}
-                              <button
-                                class="document-hotspot"
-                                class:active={focusedLineId === line.id}
-                                style={hotspotStyle(line)}
-                                type="button"
-                                aria-label={line.label}
-                                onmouseenter={() => setHoveredLine(line.id)}
-                                onmouseleave={clearHoveredLine}
-                                onfocus={() => setHoveredLine(line.id)}
-                                onblur={clearHoveredLine}
-                                onclick={() => togglePinnedLine(line.id)}
-                              >
-                                <span>{line.label}</span>
-                              </button>
-                            {/each}
-                          </div>
-                        {:else if result.sourceCatalogUrl}
-                          <div class="catalog-preview">
-                            <iframe title={`NARA Catalog Datensatz ${result.naid}`} src={result.sourceCatalogUrl}></iframe>
-                            <div class="catalog-preview-link">
-                              <a class="button secondary" href={result.sourceCatalogUrl} target="_blank" rel="noreferrer">
-                                NARA-Datensatz öffnen
-                              </a>
-                            </div>
-                          </div>
-                        {:else}
-                          <div class="empty-state compact-empty">
-                            <h2>Kein lokales Originalbild</h2>
-                            <p>Für diesen Treffer ist noch keine Bildseite im lokalen Cache vorhanden.</p>
-                          </div>
-                        {/if}
-                      </section>
-
-                      <section class="transcript-pane" aria-label={`Transkript ${result.name}`}>
-                        <div class="section-heading">
-                          <span class="eyebrow">Transkript</span>
-                          <h2>Personendaten</h2>
-                        </div>
-                        <div class="identity-grid">
-                          <span>
-                            <strong>Name</strong>
-                            {result.name}
-                          </span>
-                          <span>
-                            <strong>Geburtsdatum</strong>
-                            {result.birthDate}
-                          </span>
-                          <span>
-                            <strong>Geburtsort</strong>
-                            {result.birthPlace}
-                          </span>
-                          <span>
-                            <strong>Wohnort</strong>
-                            {result.residencePlace}
-                          </span>
-                        </div>
-                        <div class="transcript-lines">
-                          {#each transcriptRowsFor(result) as line}
-                            <button
-                              class="transcript-line"
-                              class:active={focusedLineId === line.id}
-                              type="button"
-                              onmouseenter={() => setHoveredLine(line.id)}
-                              onmouseleave={clearHoveredLine}
-                              onfocus={() => setHoveredLine(line.id)}
-                              onblur={clearHoveredLine}
-                              onclick={() => togglePinnedLine(line.id)}
-                            >
-                              <span>{line.label}</span>
-                              <strong>{line.value}</strong>
-                              <small>{line.note}</small>
-                            </button>
-                          {/each}
-                        </div>
-                        <div class="transcript-editor-panel">
-                          <div class="transcript-meta">
-                            <span>{result.transcriptSource}</span>
-                            {#if result.transcriptEdited}
-                              <span>manuell korrigiert</span>
-                            {/if}
-                          </div>
-                          <label>
-                            Transkription
-                            <textarea
-                              class="transcript-editor"
-                              value={transcriptDraftFor(result)}
-                              rows="16"
-                              oninput={(event) => updateTranscriptDraft(result, event)}
-                            ></textarea>
-                          </label>
-                          <div class="actions">
-                            <button
-                              class="button"
-                              type="button"
-                              onclick={() => saveResultTranscript(result)}
-                              disabled={isTranscriptSaving(result) || result.resultId === null}
-                            >
-                              {isTranscriptSaving(result) ? 'Speichere...' : 'Transkription speichern'}
-                            </button>
-                          </div>
-                          {#if transcriptNoticeFor(result)}
-                            <p class="notice compact-message">{transcriptNoticeFor(result)}</p>
-                          {/if}
-                          {#if transcriptErrorFor(result)}
-                            <p class="error compact-message">{transcriptErrorFor(result)}</p>
-                          {/if}
-                        </div>
-                        {#if result.evidence.length > 0}
-                          <div class="evidence-list">
-                            {#each result.evidence as evidence}
-                              <p>{evidence}</p>
-                            {/each}
-                          </div>
-                        {/if}
-                      </section>
-                    </div>
+                  <article class="history-result-entry" aria-label={`Treffer ${result.name}`}>
                     <button
                       class="match-row"
                       type="button"
@@ -1792,12 +1940,140 @@
       </div>
     </section>
   {:else if activeRoute === 'local-documents'}
-    <section class="page">
-      <h1>Lokale Dokumente</h1>
-      <div class="empty-state">
-        <h2>Lokales Dokument untersuchen</h2>
-        <p>Dieser Modus wird für PDF, PNG, JPEG und TIFF vorbereitet. Dateien bleiben lokal und werden nicht hochgeladen.</p>
+    <section class="page wide local-documents-page">
+      <div class="page-header">
+        <div>
+          <h1>Lokale Dokumente</h1>
+          <p>
+            Prüfe einzelne PDF- oder Bilddateien lokal, bevor du sie als Quelle auswertest. Die Datei wird im lokalen
+            NARATrace-Datenverzeichnis gespeichert, als Browser-Vorschau gerendert und per OCR erschlossen.
+          </p>
+        </div>
       </div>
+
+      <div class="local-document-grid">
+        <section class="local-document-panel" aria-label="Lokales Dokument analysieren">
+          <div class="section-heading">
+            <span class="eyebrow">Analyse</span>
+            <h2>Datei auswählen</h2>
+          </div>
+          <form class="local-document-form" onsubmit={analyzeSelectedLocalDocument}>
+            <label>
+              Datei auswählen
+              <input
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.webp,.gif,application/pdf,image/*"
+                onchange={selectLocalDocumentFile}
+              />
+            </label>
+            <label>
+              Prüfbegriffe
+              <textarea
+                bind:value={localDocumentTerms}
+                rows="5"
+                placeholder="z. B. Schultze-Naumburg&#10;347541&#10;Naumburg"
+              ></textarea>
+            </label>
+            <button class="button" type="submit" disabled={localDocumentLoading}>
+              {localDocumentLoading ? 'Analysiere...' : 'Dokument analysieren'}
+            </button>
+          </form>
+          {#if localDocumentNotice}
+            <p class="notice compact-message">{localDocumentNotice}</p>
+          {/if}
+          {#if localDocumentError}
+            <p class="error compact-message">{localDocumentError}</p>
+          {/if}
+        </section>
+
+        <section class="local-document-panel" aria-label="Lokale Analyse-Metadaten">
+          <div class="section-heading">
+            <span class="eyebrow">Status</span>
+            <h2>{localDocumentResult ? localDocumentResult.file_name : 'Noch keine Analyse'}</h2>
+          </div>
+          {#if localDocumentResult}
+            <dl class="local-document-meta">
+              <dt>Dateigröße</dt>
+              <dd>{formatFileSize(localDocumentResult.size_bytes)}</dd>
+              <dt>Inhaltstyp</dt>
+              <dd>{localDocumentResult.content_type ?? 'nicht ermittelt'}</dd>
+              <dt>OCR</dt>
+              <dd>{localDocumentResult.ocr_engine ?? 'kein Text erkannt'}</dd>
+              <dt>Gespeichert</dt>
+              <dd>{formatDateTime(localDocumentResult.stored_at)}</dd>
+            </dl>
+            {#if localDocumentResult.warnings.length > 0}
+              <div class="warning-list local-document-warnings" aria-label="Hinweise zur lokalen Analyse">
+                {#each localDocumentResult.warnings as warning}
+                  <p>{warning}</p>
+                {/each}
+              </div>
+            {/if}
+          {:else}
+            <p>
+              Sinnvoll ist dieser Reiter für lokale Scans, PDF-Auszüge oder TIFF/JPEG-Seiten, die noch nicht aus einem
+              NARA-Suchjob stammen, aber schnell auf Namen, Nummern oder Orte geprüft werden sollen.
+            </p>
+          {/if}
+        </section>
+      </div>
+
+      {#if localDocumentResult}
+        <div class="detail-shell local-document-review">
+          <section class="original-pane" aria-label="Lokale Dokumentvorschau">
+            <div class="section-heading">
+              <span class="eyebrow">Vorschau</span>
+              <h2>{localDocumentResult.file_name}</h2>
+            </div>
+            {#if localDocumentResult.display_image_url}
+              <div class="document-stage local-document-stage">
+                <img src={localDocumentResult.display_image_url} alt={`Vorschau ${localDocumentResult.file_name}`} />
+              </div>
+            {:else}
+              <div class="empty-state compact-empty">
+                <h2>Keine Vorschau verfügbar</h2>
+                <p>Die Datei wurde gespeichert, konnte aber nicht in ein Browserbild umgewandelt werden.</p>
+              </div>
+            {/if}
+          </section>
+
+          <section class="transcript-pane" aria-label="Lokale OCR">
+            <div class="section-heading">
+              <span class="eyebrow">OCR und Transkript</span>
+              <h2>Erkannter Text</h2>
+            </div>
+            <label>
+              OCR-Text
+              <textarea
+                class="transcript-editor"
+                readonly
+                rows="16"
+                value={localDocumentResult.ocr_text ?? 'Kein OCR-Text erkannt.'}
+              ></textarea>
+            </label>
+
+            {#if localDocumentMatches.length > 0}
+              <div class="local-term-results" aria-label="Prüfbegriffe im OCR-Text">
+                {#each localDocumentMatches as match}
+                  <article class:missing={match.count === 0}>
+                    <div>
+                      <strong>{match.term}</strong>
+                      <span>{match.count === 1 ? '1 Fundstelle' : `${match.count} Fundstellen`}</span>
+                    </div>
+                    {#if match.snippets.length > 0}
+                      {#each match.snippets as snippet}
+                        <p>{snippet}</p>
+                      {/each}
+                    {:else}
+                      <p>Im OCR-Text nicht gefunden.</p>
+                    {/if}
+                  </article>
+                {/each}
+              </div>
+            {/if}
+          </section>
+        </div>
+      {/if}
     </section>
   {:else if activeRoute === 'settings'}
     <section class="page">
@@ -1806,13 +2082,24 @@
         <section class="status-panel">
           <h2>NARA API-Schlüssel</h2>
           <p>
-            NARA API-Schlüssel:
-            {settings?.nara_api_key_configured ? ` eingerichtet (${settings.nara_api_key_source})` : ' nicht eingerichtet'}
+            Jeder Nutzer verwendet seinen eigenen NARA API-Schlüssel. NARATrace speichert eingegebene Schlüssel nur lokal
+            im Betriebssystem-Keyring; alternativ kann `NARA_API_KEY` als lokale Umgebungsvariable gesetzt werden.
           </p>
+          <dl class="settings-status-list">
+            <dt>Status</dt>
+            <dd>{settings?.nara_api_key_configured ? `eingerichtet (${settings.nara_api_key_source})` : 'nicht eingerichtet'}</dd>
+            <dt>Lokaler API-Zähler</dt>
+            <dd>{settings ? apiUsageLabel(settings.nara_api_usage) : 'nicht geladen'}</dd>
+          </dl>
           <label>
             API-Schlüssel eintragen oder ändern
             <input bind:value={naraApiKeyInput} type="password" autocomplete="off" placeholder="x-api-key" />
           </label>
+          <div class="settings-help-list" aria-label="API-Schlüssel Hinweise">
+            <p>Schlüssel bei NARA anfordern: <code>Catalog_API@nara.gov</code></p>
+            <p>Nach dem Speichern den Schlüssel testen, bevor du eine echte Suche startest.</p>
+            <p>Der Schlüssel erscheint nicht in Exporten, Suchverläufen oder Screenshots.</p>
+          </div>
           <div class="actions">
             <button class="button" type="button" onclick={saveKey}>Schlüssel speichern</button>
             <button class="button secondary" type="button" onclick={runKeyTest}>Schlüssel testen</button>
@@ -1851,16 +2138,118 @@
       {/if}
     </section>
   {:else if activeRoute === 'methodology'}
-    <section class="page">
-      <h1>Methodik</h1>
-      <div class="method-list">
+    <section class="page wide methodology-page">
+      <div class="page-header">
+        <div>
+          <h1>Methodik</h1>
+          <p>
+            NARATrace bewertet Archivtreffer als Forschungshinweise. Das System sammelt Kandidaten,
+            ordnet Evidenzen und macht sichtbar, warum ein Treffer plausibel oder unsicher ist.
+          </p>
+        </div>
+      </div>
+
+      <div class="method-list" aria-label="Methodische Kernschritte">
         <span>Query Expansion</span>
         <span>Candidate Retrieval</span>
         <span>Metadatenbewertung</span>
-        <span>Textbewertung</span>
+        <span>OCR und Extrakttext</span>
         <span>Ranking mit Evidenz</span>
+        <span>Quellenkritische Prüfung</span>
       </div>
-      <p>NARATrace darf keine Person allein aufgrund eines ähnlichen Namens sicher identifizieren.</p>
+
+      <section class="method-overview" aria-label="Methodischer Grundsatz">
+        <div>
+          <span class="eyebrow">Grundsatz</span>
+          <h2>Ähnlichkeit ist kein Identitätsnachweis</h2>
+          <p>
+            Ein Treffer wird nicht allein wegen eines ähnlichen Namens als gesichert behandelt. NARATrace kombiniert
+            Namen, Orte, Geburtsdaten, Mitgliedsnummern, Record Groups, NARA-Metadaten und verfügbare Textquellen.
+            Je mehr unabhängige Merkmale zusammenpassen, desto höher wird der Treffer eingeordnet.
+          </p>
+        </div>
+        <div>
+          <span class="eyebrow">Ausgabe</span>
+          <h2>Gerankte Hinweise statt endgültiger Urteilsspruch</h2>
+          <p>
+            Die Trefferliste zeigt Wahrscheinlichkeiten und Evidenzhinweise. Die eigentliche Entscheidung bleibt
+            quellenkritische Forschungsarbeit: Originalseite öffnen, Transkript prüfen, Abweichungen dokumentieren
+            und den Datensatz im NARA Catalog nachvollziehen.
+          </p>
+        </div>
+      </section>
+
+      <section class="workflow-section" aria-label="Workflow-Schema">
+        <div class="section-heading">
+          <span class="eyebrow">Workflow-Schema</span>
+          <h2>Von der Suchangabe zum prüfbaren Treffer</h2>
+        </div>
+        <ol class="workflow-schema">
+          <li>
+            <span class="workflow-step-number">1</span>
+            <strong>Suchprofil erfassen</strong>
+            <p>Name, Varianten, Orte, Jahrgänge, Mitgliedsnummern und optionale archivische Eingrenzungen werden normalisiert.</p>
+            <small>Output: strukturierte Suchfelder</small>
+          </li>
+          <li>
+            <span class="workflow-step-number">2</span>
+            <strong>Abfragen ableiten</strong>
+            <p>Aus engen und breiteren Varianten entstehen NARA-Catalog-Abfragen, damit Schreibweisen und fragmentarische Angaben abgedeckt sind.</p>
+            <small>Output: Query-Varianten</small>
+          </li>
+          <li>
+            <span class="workflow-step-number">3</span>
+            <strong>Kandidaten laden</strong>
+            <p>Der Catalog liefert Datensätze und digitale Objekte. Lokale Seiten werden bevorzugt cachebar gemacht, wenn ein Bild darstellbar ist.</p>
+            <small>Output: Kandidaten und Originalseiten</small>
+          </li>
+          <li>
+            <span class="workflow-step-number">4</span>
+            <strong>Textbasis bilden</strong>
+            <p>NARA Extracted Text, lokale OCR und Metadaten werden als überprüfbare Textquellen zusammengeführt.</p>
+            <small>Output: Transkript und Textursprung</small>
+          </li>
+          <li>
+            <span class="workflow-step-number">5</span>
+            <strong>Evidenz bewerten</strong>
+            <p>Übereinstimmungen und Widersprüche werden gewichtet: Name allein zählt weniger als mehrere unabhängige Treffermerkmale.</p>
+            <small>Output: Score und Evidenzliste</small>
+          </li>
+          <li>
+            <span class="workflow-step-number">6</span>
+            <strong>Quellenprüfung</strong>
+            <p>Die gerankten Treffer werden im Original, im Transkript und im NARA-Datensatz nachvollziehbar geprüft.</p>
+            <small>Output: belastbarer Forschungsbefund</small>
+          </li>
+        </ol>
+      </section>
+
+      <section class="method-grid" aria-label="Bewertung und Grenzen">
+        <article class="method-panel">
+          <span class="eyebrow">Ranking</span>
+          <h2>Was die Trefferwahrscheinlichkeit meint</h2>
+          <p>
+            Der Score beschreibt Plausibilität im Vergleich zu anderen Kandidaten. Er ist hoch, wenn mehrere Merkmale
+            konsistent zusammenpassen, und niedriger, wenn nur Namensähnlichkeit oder unsichere Textstellen vorliegen.
+          </p>
+        </article>
+        <article class="method-panel">
+          <span class="eyebrow">Transkription</span>
+          <h2>Warum manuelle Korrekturen wichtig sind</h2>
+          <p>
+            OCR und extrahierte Catalog-Texte können Fehler enthalten. Korrigierte Transkriptionen bleiben lokal
+            gespeichert und verbessern die Nachvollziehbarkeit eines konkreten Suchverlaufs.
+          </p>
+        </article>
+        <article class="method-panel">
+          <span class="eyebrow">Grenzen</span>
+          <h2>Was NARATrace nicht entscheidet</h2>
+          <p>
+            Die Anwendung ersetzt keine Archivinterpretation. Gleichnamige Personen, unvollständige Datensätze,
+            falsch erkannte Seiten oder fehlende Digitalisate müssen weiterhin anhand der Quelle beurteilt werden.
+          </p>
+        </article>
+      </section>
     </section>
   {:else if activeRoute === 'about'}
     <section class="page">

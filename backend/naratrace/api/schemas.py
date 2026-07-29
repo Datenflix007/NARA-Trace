@@ -50,6 +50,18 @@ class ApiKeyTestResponse(BaseModel):
     nara_api_usage: NaraApiUsageResponse | None = None
 
 
+class LocalDocumentResponse(BaseModel):
+    id: str
+    file_name: str
+    content_type: str | None
+    size_bytes: int
+    display_image_url: str | None
+    ocr_text: str | None
+    ocr_engine: str | None
+    warnings: list[str]
+    stored_at: datetime
+
+
 class SearchRequest(BaseModel):
     first_name: str | None = None
     last_name: str = Field(min_length=1)

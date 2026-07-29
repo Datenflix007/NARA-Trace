@@ -18,7 +18,8 @@ from naratrace.api.schemas import SearchRequest
 from naratrace.core.paths import ensure_local_directories
 from naratrace.nara.client import NaraRecord
 
-MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
+MAX_DOWNLOAD_BYTES = 125 * 1024 * 1024
+MAX_DOWNLOAD_MB = MAX_DOWNLOAD_BYTES // (1024 * 1024)
 DOWNLOAD_TIMEOUT_SECONDS = 30.0
 OCR_TIMEOUT_SECONDS = 20
 BROWSER_DISPLAY_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
@@ -175,12 +176,12 @@ async def download_digital_object(job_id: str, naid: str, index: int, url: str) 
     if content_length:
         try:
             if int(content_length) > MAX_DOWNLOAD_BYTES:
-                raise RuntimeError("Datei ist groesser als 50 MB")
+                raise RuntimeError(f"Datei ist groesser als {MAX_DOWNLOAD_MB} MB")
         except ValueError:
             pass
     content = response.content
     if len(content) > MAX_DOWNLOAD_BYTES:
-        raise RuntimeError("Datei ist groesser als 50 MB")
+        raise RuntimeError(f"Datei ist groesser als {MAX_DOWNLOAD_MB} MB")
 
     suffix = infer_suffix(url, response.headers.get("content-type"))
     target = directory / f"{safe_name(naid)}-{index + 1}-{hashlib.sha1(url.encode('utf-8')).hexdigest()[:10]}{suffix}"
@@ -270,6 +271,13 @@ def is_probable_image_url(url: str | None) -> bool:
         return False
     path = urlparse(url).path.casefold()
     return path.endswith((".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".gif"))
+
+
+def is_browser_display_url(url: str | None) -> bool:
+    if not url:
+        return False
+    path = urlparse(url).path.casefold()
+    return any(path.endswith(suffix) for suffix in BROWSER_DISPLAY_SUFFIXES)
 
 
 def infer_suffix(url: str, content_type: str | None) -> str:

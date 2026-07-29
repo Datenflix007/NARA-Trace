@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import unicodedata
 from datetime import datetime, timezone
@@ -36,6 +37,7 @@ from naratrace.nara.client import NaraCatalogClient, NaraClientError, NaraRecord
 from naratrace.processing.documents import (
     MaterializedPage,
     ensure_display_image,
+    is_browser_display_url,
     materialize_best_page,
 )
 
@@ -44,6 +46,7 @@ LOCAL_DEMO_PDF_PATH = Path.home() / "Downloads" / "SchulzeNaumburg_NSDAP_Kartei1
 LOCAL_DEMO_PDF_SERIES = "A3340-MFKL-R0013.pdf"
 LOCAL_DEMO_PDF_PAGE_COUNT = 4
 NARA_QUERY_MAX_LENGTH = 1024
+TERMINAL_JOB_STATUSES = {"complete", "failed", "cancelled"}
 
 
 async def create_search_job(payload: SearchRequest) -> SearchJobResponse:
@@ -77,6 +80,8 @@ async def create_search_job(payload: SearchRequest) -> SearchJobResponse:
 async def run_search_job(job_id: str, payload: SearchRequest) -> None:
     try:
         await execute_search_job(job_id, payload)
+    except asyncio.CancelledError:
+        raise
     except Exception as exc:
         fail_search_job(job_id, "Interner Fehler beim Suchlauf.", [str(exc)])
 
@@ -84,11 +89,12 @@ async def run_search_job(job_id: str, payload: SearchRequest) -> None:
 async def execute_search_job(job_id: str, payload: SearchRequest) -> None:
     settings = get_settings()
     mock_mode = settings.mock_mode or payload.demo_mode
-    update_job_state(job_id, "preparing_search", 1)
+    if not update_job_state(job_id, "preparing_search", 1):
+        return
 
     with session_scope() as session:
         job = session.get(SearchJob, job_id)
-        if job is None:
+        if job is None or job.status == "cancelled":
             return
         title = job.title or build_job_title(payload)
         if mock_mode:
@@ -116,19 +122,24 @@ async def execute_search_job(job_id: str, payload: SearchRequest) -> None:
             session.flush()
             return
 
-    update_job_state(job_id, "searching_catalog", 2)
+    if not update_job_state(job_id, "searching_catalog", 2):
+        return
     try:
         nara_response = await run_nara_candidate_search(payload, api_key)
     except NaraClientError as exc:
         fail_search_job(job_id, str(exc), [str(exc), f"API-Schlüsselquelle: {key_source}."])
         return
 
-    update_job_state(job_id, "downloading_pages_ocr", 4)
+    if is_search_job_cancelled(job_id):
+        return
+    if not update_job_state(job_id, "downloading_pages_ocr", 4):
+        return
     stored_count, materialization_warnings = await store_nara_candidates(job_id, payload, nara_response)
-    update_job_state(job_id, "ranking", 5)
+    if not update_job_state(job_id, "ranking", 5):
+        return
     with session_scope() as session:
         job = session.get(SearchJob, job_id)
-        if job is None:
+        if job is None or job.status == "cancelled":
             return
         job.status = "complete"
         job.progress_current = 6
@@ -145,14 +156,17 @@ async def execute_search_job(job_id: str, payload: SearchRequest) -> None:
         session.flush()
 
 
-def update_job_state(job_id: str, status: str, progress_current: int) -> None:
+def update_job_state(job_id: str, status: str, progress_current: int) -> bool:
     with session_scope() as session:
         job = session.get(SearchJob, job_id)
         if job is None:
-            return
+            return False
+        if job.status in TERMINAL_JOB_STATUSES:
+            return False
         job.status = status
         job.progress_current = progress_current
         session.flush()
+        return True
 
 
 def fail_search_job(job_id: str, message: str, warnings: list[str] | None = None) -> None:
@@ -160,11 +174,35 @@ def fail_search_job(job_id: str, message: str, warnings: list[str] | None = None
         job = session.get(SearchJob, job_id)
         if job is None:
             return
+        if job.status == "cancelled":
+            return
         job.status = "failed"
         job.completed_at = datetime.now(timezone.utc)
         job.error_message = message
         job.warnings = warnings or [message]
         session.flush()
+
+
+def is_search_job_cancelled(job_id: str) -> bool:
+    with session_scope() as session:
+        job = session.get(SearchJob, job_id)
+        return job is None or job.status == "cancelled"
+
+
+def cancel_search_job(job_id: str) -> SearchJobResponse | None:
+    with session_scope() as session:
+        job = session.get(SearchJob, job_id)
+        if job is None:
+            return None
+        if job.status not in TERMINAL_JOB_STATUSES:
+            job.status = "cancelled"
+            job.completed_at = datetime.now(timezone.utc)
+            job.warnings = [
+                *(job.warnings or []),
+                "Suchjob wurde vom Benutzer abgebrochen.",
+            ]
+            session.flush()
+        return serialize_job(session, job.id)
 
 
 def list_search_jobs(limit: int = 20) -> list[SearchJobResponse]:
@@ -482,6 +520,8 @@ async def store_nara_candidates(job_id: str, payload: SearchRequest, nara_respon
     warnings: list[str] = []
     seen_naids: set[str] = set()
     for item in nara_response.items:
+        if is_search_job_cancelled(job_id):
+            return stored, warnings
         record = item.record
         naid = str(record.naId or "").strip()
         if not naid or naid in seen_naids:
@@ -492,7 +532,7 @@ async def store_nara_candidates(job_id: str, payload: SearchRequest, nara_respon
             warnings.append(f"NAID {naid}: {materialized_page.warning}")
         with session_scope() as session:
             job = session.get(SearchJob, job_id)
-            if job is None:
+            if job is None or job.status == "cancelled":
                 return stored, warnings
             stored += store_nara_candidate(session, job, payload, item, materialized_page)
     return stored, warnings
@@ -1102,7 +1142,11 @@ def build_source_page_url(page: CandidatePage | None) -> str | None:
         return None
     if page.local_path and Path(page.local_path).exists():
         return f"/api/pages/{page.id}/image"
-    return page.image_url
+    if is_browser_display_url(page.image_url):
+        return page.image_url
+    if page.digital_object and is_browser_display_url(page.digital_object.thumbnail_url):
+        return page.digital_object.thumbnail_url
+    return None
 
 
 def build_source_page_label(record: CandidateRecord, page: CandidatePage | None) -> str | None:

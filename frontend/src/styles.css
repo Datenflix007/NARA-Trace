@@ -181,6 +181,10 @@ p {
   margin-top: 18px;
 }
 
+.report-actions {
+  margin-top: 16px;
+}
+
 .page-header,
 .detail-header {
   justify-content: space-between;
@@ -218,6 +222,7 @@ p {
 .status-panel,
 .empty-state,
 .example-panel,
+.research-workflow,
 .history-sidebar,
 .history-results,
 .original-pane,
@@ -235,6 +240,82 @@ p {
 
 .compact-empty {
   margin-top: 0;
+}
+
+.research-workflow {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 16px;
+}
+
+.research-workflow .section-heading {
+  margin-bottom: 0;
+}
+
+.research-setup-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #d9e0de;
+  border-radius: 6px;
+  padding: 14px;
+  background: #fbfcfc;
+}
+
+.research-setup-strip div {
+  display: grid;
+  gap: 4px;
+  min-width: min(100%, 420px);
+}
+
+.research-setup-strip strong {
+  color: #202426;
+  font-size: 17px;
+}
+
+.research-setup-strip span {
+  color: #5f6868;
+  line-height: 1.45;
+}
+
+.workflow-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.workflow-cards article {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  border: 1px solid #d9e0de;
+  border-radius: 6px;
+  padding: 14px;
+  background: #fbfcfc;
+}
+
+.workflow-cards span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #285f5a;
+  font-weight: 900;
+}
+
+.workflow-cards strong {
+  color: #202426;
+  font-size: 17px;
+}
+
+.workflow-cards p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .status-panel h2,
@@ -358,6 +439,12 @@ p {
 
 .search-progress-panel .progress-stats {
   margin-top: 14px;
+}
+
+.progress-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 
 .progress-hint {
@@ -643,11 +730,32 @@ textarea {
 
 .history-sidebar {
   display: grid;
-  gap: 10px;
+  gap: 12px;
+}
+
+.history-sidebar-header {
+  display: grid;
+  gap: 5px;
+  border-bottom: 1px solid #d9e0de;
+  padding-bottom: 12px;
+}
+
+.history-sidebar-header h2 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.history-sidebar-header p {
+  margin: 0;
+  color: #5f6868;
+  font-size: 14px;
+  line-height: 1.4;
 }
 
 .history-entry,
-.result-entry {
+.result-entry,
+.history-result-entry {
   display: grid;
   gap: 8px;
 }
@@ -663,6 +771,60 @@ textarea {
   color: #5f6868;
   text-align: left;
   cursor: pointer;
+}
+
+.history-meta-line {
+  color: #293332;
+  font-weight: 750;
+}
+
+.history-results {
+  display: grid;
+  gap: 18px;
+}
+
+.history-detail-header {
+  display: grid;
+  gap: 16px;
+  border-bottom: 1px solid #d9e0de;
+  padding-bottom: 18px;
+}
+
+.history-detail-header .section-heading {
+  margin-bottom: 0;
+}
+
+.history-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.history-meta-grid span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid #d9e0de;
+  border-radius: 6px;
+  padding: 10px;
+  background: #fbfcfc;
+  color: #293332;
+  overflow-wrap: anywhere;
+}
+
+.history-meta-grid strong {
+  color: #5f6868;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.history-warning-list,
+.history-results-heading {
+  margin-top: 0;
+}
+
+.history-ranked-list {
+  gap: 14px;
 }
 
 .danger-button {
@@ -900,6 +1062,146 @@ textarea {
   gap: 18px;
 }
 
+.settings-status-list {
+  display: grid;
+  grid-template-columns: minmax(120px, 170px) minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 6px 0 12px;
+}
+
+.settings-status-list dt {
+  font-weight: 850;
+}
+
+.settings-status-list dd {
+  min-width: 0;
+  margin: 0;
+  color: #5f6868;
+  overflow-wrap: anywhere;
+}
+
+.settings-help-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  border-left: 3px solid #285f5a;
+  padding-left: 12px;
+}
+
+.settings-help-list p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.local-documents-page {
+  display: grid;
+  gap: 24px;
+}
+
+.local-document-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.95fr) minmax(300px, 1.05fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.local-document-panel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #cad2cf;
+  border-radius: 8px;
+  padding: 18px;
+  background: #ffffff;
+}
+
+.local-document-panel .section-heading {
+  margin-bottom: 0;
+}
+
+.local-document-form {
+  display: grid;
+  gap: 14px;
+}
+
+.local-document-meta {
+  display: grid;
+  grid-template-columns: minmax(110px, 150px) minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 0;
+}
+
+.local-document-meta dt {
+  font-weight: 850;
+}
+
+.local-document-meta dd {
+  min-width: 0;
+  margin: 0;
+  color: #5f6868;
+  overflow-wrap: anywhere;
+}
+
+.local-document-warnings {
+  margin-top: 0;
+}
+
+.local-document-review {
+  align-items: stretch;
+}
+
+.local-document-stage {
+  max-height: 68vh;
+}
+
+.local-term-results {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  border-top: 1px solid #d9e0de;
+  padding-top: 14px;
+}
+
+.local-term-results article {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #d9e0de;
+  border-radius: 6px;
+  padding: 10px;
+  background: #fbfcfc;
+}
+
+.local-term-results article.missing {
+  border-color: #d7b8ae;
+  background: #fff7f4;
+}
+
+.local-term-results div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.local-term-results strong {
+  color: #202426;
+  font-size: 16px;
+}
+
+.local-term-results span {
+  color: #5f6868;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.local-term-results p {
+  margin: 0;
+  color: #293332;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
 .method-list {
   display: flex;
   flex-wrap: wrap;
@@ -914,6 +1216,127 @@ textarea {
   background: #ffffff;
   color: #293332;
   font-weight: 700;
+}
+
+.methodology-page {
+  display: grid;
+  gap: 24px;
+}
+
+.methodology-page .method-list {
+  margin: 0;
+}
+
+.method-overview,
+.method-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.method-overview > div,
+.method-panel {
+  border: 1px solid #cad2cf;
+  border-radius: 8px;
+  padding: 18px;
+  background: #ffffff;
+}
+
+.method-overview h2,
+.method-panel h2 {
+  margin: 8px 0 10px;
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+.method-overview p,
+.method-panel p {
+  margin: 0;
+  color: #293332;
+  line-height: 1.6;
+}
+
+.workflow-section {
+  display: grid;
+  gap: 18px;
+  border: 1px solid #cad2cf;
+  border-radius: 8px;
+  padding: 18px;
+  background: #ffffff;
+}
+
+.workflow-section .section-heading {
+  margin-bottom: 0;
+}
+
+.workflow-schema {
+  counter-reset: workflow;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-schema li {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+  border: 1px solid #d9e0de;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfcfc;
+}
+
+.workflow-schema li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 28px;
+  right: -10px;
+  z-index: 1;
+  width: 16px;
+  height: 2px;
+  background: #285f5a;
+}
+
+.workflow-step-number {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #285f5a;
+  font-weight: 900;
+}
+
+.workflow-schema strong {
+  color: #202426;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.workflow-schema p,
+.workflow-schema small {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.workflow-schema p {
+  color: #293332;
+  font-size: 14px;
+}
+
+.workflow-schema small {
+  color: #5f6868;
+  font-weight: 750;
+}
+
+.method-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 footer {
@@ -932,12 +1355,31 @@ footer {
   .history-workspace,
   .detail-shell,
   .inline-detail-shell,
+  .local-document-grid,
+  .method-overview,
+  .method-grid,
   .settings-grid {
     grid-template-columns: 1fr;
   }
 
   .source {
     justify-content: flex-start;
+  }
+
+  .history-meta-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workflow-schema {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workflow-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workflow-schema li:not(:last-child)::after {
+    display: none;
   }
 
   h1 {
@@ -949,7 +1391,12 @@ footer {
   fieldset,
   .status-panel dl,
   .progress-stats,
+  .history-meta-grid,
   .identity-grid,
+  .local-document-meta,
+  .settings-status-list,
+  .workflow-schema,
+  .workflow-cards,
   .transcript-line {
     grid-template-columns: 1fr;
   }
