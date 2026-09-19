@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import App from './App.svelte';
@@ -27,6 +27,8 @@ function localResult(overrides = {}) {
     job_id: 'job-1',
     match_score: 96,
     category: 'sehr wahrscheinlich',
+    source_category: 'nsdap_membership_cards',
+    source_category_label: 'NSDAP-Karteikarten',
     suspected_person_name: 'Paul Schultze-Naumburg',
     birth_date: null,
     birth_place: null,
@@ -155,6 +157,8 @@ describe('App', () => {
     expect(screen.getByLabelText('Geburtsdatum')).toBeTruthy();
     expect(screen.getByLabelText('Wohnorte')).toBeTruthy();
     expect(screen.getByLabelText('Mitgliedsnummer')).toBeTruthy();
+    expect(screen.getByLabelText(/NSDAP-Karteikarten/)).toBeTruthy();
+    expect(screen.getByLabelText(/Kriegsaufnahmen/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Demo-Treffer anzeigen' })).toBeNull();
   });
 
@@ -259,6 +263,7 @@ describe('App', () => {
     await fireEvent.input(screen.getByLabelText('Geburtsjahr oder bekanntes Jahr'), { target: { value: '1869' } });
     await fireEvent.input(screen.getByLabelText('Wohnorte'), { target: { value: 'Naumburg\nSaaleck' } });
     await fireEvent.input(screen.getByLabelText('Mitgliedsnummer'), { target: { value: '347.541' } });
+    await fireEvent.click(screen.getByLabelText(/NSDAP-Karteikarten/));
     await fireEvent.click(screen.getByRole('button', { name: 'Suchjob anlegen' }));
 
     await waitFor(() => {
@@ -267,6 +272,7 @@ describe('App', () => {
 
     const searchCall = fetchMock.mock.calls.find(([url, init]) => String(url) === '/api/search' && init?.method === 'POST');
     expect(searchCall?.[1]?.body).toEqual(expect.stringContaining('membership_number'));
+    expect(searchCall?.[1]?.body).toEqual(expect.stringContaining('"source_categories":["nsdap_membership_cards"]'));
     expect(searchCall?.[1]?.body).not.toEqual(expect.stringContaining('demo_mode'));
   });
 
@@ -347,7 +353,7 @@ describe('App', () => {
     expect(screen.getByText('2 von 6 Schritten (33 %)')).toBeTruthy();
     expect(screen.getByText('Restzeit')).toBeTruthy();
     expect(screen.getByText('Voraussichtliche Laufzeit')).toBeTruthy();
-    expect(progressStatValue('Voraussichtliche Laufzeit')).toBe('ca. 55 s');
+    expect(progressStatValue('Voraussichtliche Laufzeit')).toBe('ca. 1 min 30 s');
     expect(progressStatValue('Suchlaufzeit')).toBe('0 s');
 
     await waitFor(
@@ -356,7 +362,7 @@ describe('App', () => {
       },
       { timeout: 1800 }
     );
-    expect(progressStatValue('Voraussichtliche Laufzeit')).toBe('ca. 55 s');
+    expect(progressStatValue('Voraussichtliche Laufzeit')).toBe('ca. 1 min 30 s');
 
     await waitFor(
       () => {
@@ -367,12 +373,12 @@ describe('App', () => {
 
     await waitFor(
       () => {
-        expect(screen.getByText('Originalseiten werden geladen und OCR wird vorbereitet')).toBeTruthy();
+        expect(screen.getByText('Originalseiten und Textquellen werden geprüft')).toBeTruthy();
       },
       { timeout: 2500 }
     );
     expect(screen.getByText('4 von 6 Schritten (67 %)')).toBeTruthy();
-    expect(progressStatValue('Voraussichtliche Laufzeit')).toBe('ca. 55 s');
+    expect(progressStatValue('Voraussichtliche Laufzeit')).toBe('ca. 1 min 30 s');
 
     await waitFor(
       () => {
@@ -666,7 +672,7 @@ describe('App', () => {
     expect(screen.queryByText('Kein lokales Originalbild')).toBeNull();
   });
 
-  it('öffnet im Suchverlauf einen Job nach kurzem Ladefehler und sortiert Treffer nach Wahrscheinlichkeit', async () => {
+  it('öffnet im Suchverlauf einen Job, sortiert chronologisch und filtert nach Quellenart', async () => {
     let historyCalls = 0;
     let historyResultCalls = 0;
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
@@ -696,6 +702,8 @@ describe('App', () => {
               match_score: 34,
               suspected_person_name: 'Niedriger Treffer',
               title: 'Niedriger Treffer',
+              source_category: 'photographs_portraits',
+              source_category_label: 'Fotos und Porträts',
               record_years: [1934, 1939]
             }),
             localResult({
@@ -734,15 +742,33 @@ describe('App', () => {
     expect(screen.getByText('Treffer nach Jahrzehnt')).toBeTruthy();
     expect(screen.getByText('1920er')).toBeTruthy();
     expect(screen.getByText('1930er')).toBeTruthy();
-    expect(screen.getByText('Nach Trefferwahrscheinlichkeit')).toBeTruthy();
+    expect(screen.getByText('Chronologisch nach Quellenjahr')).toBeTruthy();
     expect(screen.queryByText('Die Treffer konnten nicht geladen werden.')).toBeNull();
 
     const high = screen.getAllByText('Hoher Treffer')[0];
     const low = screen.getAllByText('Niedriger Treffer')[0];
     expect(Boolean(high.compareDocumentPosition(low) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Treffer aus den 1930er anzeigen' }));
+    await waitFor(() => {
+      expect(screen.queryByText('Hoher Treffer')).toBeNull();
+    });
+    expect(screen.getByText('Quellen aus den 1930er')).toBeTruthy();
+    expect(screen.getAllByText('Niedriger Treffer').length).toBeGreaterThan(0);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Alle Jahrzehnte anzeigen' }));
+    await waitFor(() => {
+      expect(screen.getAllByText('Hoher Treffer').length).toBeGreaterThan(0);
+    });
+
+    await fireEvent.click(screen.getByLabelText(/Fotos und Porträts/));
+    await waitFor(() => {
+      expect(screen.queryByText('Hoher Treffer')).toBeNull();
+    });
+    expect(screen.getAllByText('Niedriger Treffer').length).toBeGreaterThan(0);
   });
 
-  it('exportiert einen Suchverlauf als Markdown-Recherchebericht', async () => {
+  it('exportiert einen Suchverlauf als Markdown, PDF und ZIP', async () => {
     const createObjectURL = vi.fn(() => 'blob:naratrace-report');
     const revokeObjectURL = vi.fn();
     Object.defineProperty(window.URL, 'createObjectURL', { value: createObjectURL, configurable: true });
@@ -778,6 +804,24 @@ describe('App', () => {
           }
         });
       }
+      if (url === '/api/search/job-1/export.pdf') {
+        return new Response('%PDF-1.7', {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': 'attachment; filename="naratrace-recherchebericht.pdf"'
+          }
+        });
+      }
+      if (url === '/api/search/job-1/export.zip') {
+        return new Response('zip-bytes', {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/zip',
+            'Content-Disposition': 'attachment; filename="naratrace-suchverlauf.zip"'
+          }
+        });
+      }
       return new Response('{}', { status: 404 });
     });
 
@@ -791,19 +835,43 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByText('Exportierbarer Treffer')).toBeTruthy();
     });
-    await fireEvent.click(screen.getByRole('button', { name: 'Recherchebericht exportieren' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Markdown exportieren' }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith('/api/search/job-1/export.md');
     });
     await waitFor(() => {
+      expect(screen.getByText('Markdown wurde erzeugt.')).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Ausführliche PDF exportieren' }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/search/job-1/export.pdf');
+    });
+    await waitFor(() => {
+      expect(screen.getByText('PDF wurde erzeugt.')).toBeTruthy();
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Suchverlauf als ZIP' }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/search/job-1/export.zip');
+    });
+    await waitFor(() => {
       expect(createObjectURL).toHaveBeenCalled();
     });
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:naratrace-report');
-    expect(screen.getByText('Recherchebericht wurde erzeugt.')).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByText('ZIP-Archiv wurde erzeugt.')).toBeTruthy();
+    });
   });
 
   it('zeigt Suchlaufvorschau und blättert Bild- und MP4-Seiten im Viewer', async () => {
+    const createObjectURL = vi.fn(() => 'blob:naratrace-result-report');
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(window.URL, 'createObjectURL', { value: createObjectURL, configurable: true });
+    Object.defineProperty(window.URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true });
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
     const mediaResult = localResult({
       id: 9,
       job_id: 'job-media',
@@ -820,20 +888,37 @@ describe('App', () => {
         {
           page_id: 1,
           page_number: 1,
-          label: 'Bildseite 1',
+          label: 'Deckblatt',
           media_url: '/api/pages/1/media',
           media_type: 'image',
-          original_url: 'https://catalog.archives.gov/media/page-1.jpg',
+          original_url: 'https://catalog.archives.gov/media/cover.jpg',
           thumbnail_url: '/api/pages/1/media',
           mime_type: 'image/jpeg',
-          transcript_text: 'Adolf Hitler',
+          transcript_text: 'Deckblatt ohne Personenangabe',
           transcript_source: 'NARA Extracted Text',
-          transcript_edited: false
+          transcript_edited: false,
+          match_terms: [],
+          match_snippets: []
         },
         {
           page_id: 2,
           page_number: 2,
-          label: 'Filmseite 2',
+          label: 'Bildseite 2',
+          media_url: '/api/pages/2/media',
+          media_type: 'image',
+          original_url: 'https://catalog.archives.gov/media/page-2.jpg',
+          thumbnail_url: '/api/pages/2/media',
+          mime_type: 'image/jpeg',
+          transcript_text: 'Adolf Hitler',
+          transcript_source: 'NARA Extracted Text',
+          transcript_edited: false,
+          match_terms: ['Adolf Hitler'],
+          match_snippets: ['Adolf Hitler']
+        },
+        {
+          page_id: 3,
+          page_number: 3,
+          label: 'Filmseite 3',
           media_url: 'https://catalog.archives.gov/media/film.mp4',
           media_type: 'video',
           original_url: 'https://catalog.archives.gov/media/film.mp4',
@@ -841,12 +926,14 @@ describe('App', () => {
           mime_type: 'video/mp4',
           transcript_text: null,
           transcript_source: null,
-          transcript_edited: false
+          transcript_edited: false,
+          match_terms: [],
+          match_snippets: []
         }
       ]
     });
 
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
       if (url === '/api/settings') {
         return new Response(JSON.stringify(settingsResponse()), {
@@ -876,6 +963,15 @@ describe('App', () => {
           headers: { 'Content-Type': 'application/json' }
         });
       }
+      if (url === '/api/search/job-media/results/9/export.pdf') {
+        return new Response('%PDF-1.7', {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': 'attachment; filename="naratrace-treffer.pdf"'
+          }
+        });
+      }
       return new Response('{}', { status: 404 });
     });
 
@@ -887,12 +983,22 @@ describe('App', () => {
     });
     await fireEvent.click(screen.getByRole('button', { name: /abgeschlossen · 1 Treffer/ }));
     await waitFor(() => {
-      expect(screen.getByText('2 Medienseiten')).toBeTruthy();
+      expect(screen.getByText('3 Medienseiten')).toBeTruthy();
     });
     await fireEvent.click(screen.getByRole('button', { name: /213259758/ }));
 
-    expect(screen.getByRole('heading', { name: 'Bildseite 1' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Bildseite 2' })).toBeTruthy();
+    expect(screen.getByText('Trefferstellen')).toBeTruthy();
+    expect(screen.getByText('Trefferseite')).toBeTruthy();
     expect(screen.getByRole('button', { name: /Name Adolf Hitler/ })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Treffer-PDF exportieren' }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/search/job-media/results/9/export.pdf');
+    });
+    await waitFor(() => {
+      expect(createObjectURL).toHaveBeenCalled();
+    });
+    expect(screen.getByText('Treffer-PDF wurde erzeugt.')).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: '+' }));
     await waitFor(() => {
       expect(screen.getByText('125 %')).toBeTruthy();
@@ -905,8 +1011,16 @@ describe('App', () => {
       expect(panLayer.getAttribute('style')).toContain('translate(22px, 36px)');
     });
 
+    await fireEvent.click(screen.getByRole('button', { name: 'Vollbild' }));
+    const dialog = screen.getByRole('dialog', { name: 'Vollbild-Medienanzeige' });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Drehen' }));
+    await waitFor(() => {
+      expect((dialog.querySelector('.media-pan-layer') as HTMLElement).getAttribute('style')).toContain('rotate(90deg)');
+    });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Schließen' }));
+
     await fireEvent.click(screen.getByRole('button', { name: 'Weiter' }));
-    expect(screen.getByRole('heading', { name: 'Filmseite 2' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Filmseite 3' })).toBeTruthy();
     expect((document.querySelector('video') as HTMLVideoElement).getAttribute('src')).toBe(
       'https://catalog.archives.gov/media/film.mp4'
     );

@@ -72,6 +72,7 @@ class SearchRequest(BaseModel):
     membership_number: str | None = None
     naid: str | None = None
     record_group: str | None = None
+    source_categories: list[str] = Field(default_factory=list, max_length=12)
     max_candidates: int = Field(default=50, ge=1, le=2000)
     demo_mode: bool = False
 
@@ -115,6 +116,8 @@ class ResultMediaPageResponse(BaseModel):
     transcript_text: str | None = None
     transcript_source: str | None = None
     transcript_edited: bool = False
+    match_terms: list[str] = Field(default_factory=list)
+    match_snippets: list[str] = Field(default_factory=list)
 
 
 class SearchResultResponse(BaseModel):
@@ -122,6 +125,8 @@ class SearchResultResponse(BaseModel):
     job_id: str
     match_score: float
     category: str
+    source_category: str | None = None
+    source_category_label: str | None = None
     suspected_person_name: str | None
     birth_date: str | None
     birth_place: str | None

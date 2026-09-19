@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import zipfile
+from io import BytesIO
 
 import httpx
 import pytest
@@ -14,7 +16,13 @@ from naratrace.database.session import session_scope
 from naratrace.main import create_app
 from naratrace.nara.client import NaraRecord, NaraSearchItem, NaraSearchResponse
 from naratrace.processing.documents import MaterializedPage
-from naratrace.processing.jobs import build_nara_query, run_nara_candidate_search
+from naratrace.processing.jobs import (
+    build_nara_params,
+    build_nara_queries,
+    build_nara_query,
+    run_nara_candidate_search,
+    score_record,
+)
 
 
 def test_nara_query_rewrites_hyphenated_terms_for_boolean_search():
@@ -36,6 +44,43 @@ def test_nara_query_rewrites_hyphenated_terms_for_boolean_search():
     assert "347541" in query
     assert " OR " in query
     assert len(query) <= 1024
+    assert any(
+        "schulzenaumburg" in query_variant.casefold()
+        for query_variant in build_nara_queries(SearchRequest(last_name="Schultze-Naumburg"))
+    )
+    assert any(
+        "schultzenauburg" in query_variant.casefold()
+        for query_variant in build_nara_queries(SearchRequest(last_name="Schultze-Naumburg"))
+    )
+
+
+def test_nara_query_uses_source_category_filters():
+    payload = SearchRequest(last_name="Schultze-Naumburg", source_categories=["nsdap_membership_cards"])
+
+    params = build_nara_params(payload)
+    queries = build_nara_queries(payload)
+
+    assert params["typeOfMaterials"] == "Textual Records"
+    assert any("NSDAP membership card" in query for query in queries)
+    assert len(queries) <= 8
+    assert "A3340 MFKL" in queries[0]
+    assert "Naumburg" in queries[0]
+
+
+def test_score_record_penalizes_conflicting_birth_year_context():
+    payload = SearchRequest(first_name="John", last_name="Doe", birth_year=1888)
+    matching_score, _, matching_evidence = score_record(
+        payload,
+        NaraRecord(naId=1001, title="John Doe personnel file", description="John Doe, born 1888 in Boston."),
+    )
+    conflicting_score, _, conflicting_evidence = score_record(
+        payload,
+        NaraRecord(naId=1002, title="John Doe personnel file", description="John Doe, born 1895 in Boston."),
+    )
+
+    assert matching_score > conflicting_score
+    assert any(evidence[0] == "negative" and "Geburtsjahr" in evidence[1] for evidence in conflicting_evidence)
+    assert any(evidence[0] == "positive" and "Geburtsjahr" in evidence[1] for evidence in matching_evidence)
 
 
 @pytest.mark.asyncio
@@ -258,6 +303,27 @@ async def test_search_job_export_returns_research_markdown(tmp_path, monkeypatch
             assert export_response.headers["content-type"].startswith("text/markdown")
             assert "attachment;" in export_response.headers["content-disposition"]
             report = export_response.text
+            pdf_response = await client.get(f"/api/search/{job['id']}/export.pdf")
+            assert pdf_response.status_code == 200
+            assert pdf_response.headers["content-type"].startswith("application/pdf")
+            assert pdf_response.content.startswith(b"%PDF")
+
+            results = (await client.get(f"/api/search/{job['id']}/results")).json()
+            result_pdf_response = await client.get(f"/api/search/{job['id']}/results/{results[0]['id']}/export.pdf")
+            assert result_pdf_response.status_code == 200
+            assert result_pdf_response.headers["content-type"].startswith("application/pdf")
+            assert result_pdf_response.content.startswith(b"%PDF")
+
+            zip_response = await client.get(f"/api/search/{job['id']}/export.zip")
+            assert zip_response.status_code == 200
+            assert zip_response.headers["content-type"].startswith("application/zip")
+            with zipfile.ZipFile(BytesIO(zip_response.content)) as archive:
+                names = set(archive.namelist())
+                assert "index.html" in names
+                assert "README.txt" in names
+                assert any(name.startswith("results/") and name.endswith(".html") for name in names)
+                index_html = archive.read("index.html").decode("utf-8")
+                assert "NARATrace Suchverlauf" in index_html
             assert "# NARATrace Recherchebericht: Paul Schultze-Naumburg" in report
             assert "## Suchprofil" in report
             assert "## Treffer" in report
@@ -381,6 +447,7 @@ async def test_create_search_job_with_api_key_stores_real_nara_candidates(tmp_pa
             assert results[0]["media_pages"][0]["media_type"] == "image"
             assert results[0]["media_pages"][0]["media_url"] == "https://catalog.archives.gov/object/mock.jpg"
             assert results[0]["record_years"] == [1869]
+            assert {"Schultze-Naumburg", "347541"}.issubset(set(results[0]["media_pages"][0]["match_terms"]))
 
 
 @pytest.mark.asyncio
@@ -464,6 +531,436 @@ async def test_search_result_groups_multiple_media_pages_and_mp4(tmp_path, monke
             assert history[0]["preview_title"] == "Adolf Hitler"
             assert history[0]["preview_media_type"] == "image"
             assert history[0]["preview_media_url"] == "https://catalog.archives.gov/media/page-1.jpg"
+
+
+@pytest.mark.asyncio
+async def test_search_job_filters_candidates_without_coherent_surname(tmp_path, monkeypatch):
+    isolate_nara_key(monkeypatch, tmp_path, api_key="test-key")
+    monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
+    reset_settings_cache()
+    reset_paths_cache()
+
+    async def fake_run_nara_candidate_search(payload, api_key):
+        return NaraSearchResponse(
+            total=2,
+            raw={"mocked": True},
+            items=[
+                NaraSearchItem(
+                    record=NaraRecord(
+                        naId=111,
+                        title="Completely different surname correspondence",
+                        description="Adolf Hitler 1869 Naumburg",
+                        digitalObjects=[{"objectUrl": "https://catalog.archives.gov/media/different.jpg"}],
+                    ),
+                    raw={"_source": {"record": {"naId": 111}}},
+                ),
+                NaraSearchItem(
+                    record=NaraRecord(
+                        naId=222,
+                        title="Paul SchulzeNaumburg NSDAP membership card",
+                        description="Karteikarte mit Mitgliedsnummer 347541.",
+                        digitalObjects=[{"objectUrl": "https://catalog.archives.gov/media/card.jpg", "extractedText": "SchulzeNaumburg 347541"}],
+                    ),
+                    raw={"_source": {"record": {"naId": 222}}},
+                ),
+            ],
+        )
+
+    materialized_naids: list[str] = []
+
+    async def fake_materialize_relevant_pages(job_id, naid, record, payload):
+        materialized_naids.append(naid)
+        return [
+            MaterializedPage(
+                object_data=record.digitalObjects[0],
+                page_number=1,
+                image_url=record.digitalObjects[0]["objectUrl"],
+                local_path=None,
+                nara_text=record.digitalObjects[0].get("extractedText"),
+                ocr_text=None,
+                ocr_engine=None,
+            )
+        ]
+
+    monkeypatch.setattr("naratrace.processing.jobs.run_nara_candidate_search", fake_run_nara_candidate_search)
+    monkeypatch.setattr("naratrace.processing.jobs.materialize_relevant_pages", fake_materialize_relevant_pages)
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            create_response = await client.post(
+                "/api/search",
+                json={"first_name": "Paul", "last_name": "Schultze-Naumburg", "membership_number": "347541"},
+            )
+            assert create_response.status_code == 201
+            job = await wait_for_terminal_job(client, create_response.json()["id"])
+
+            results = (await client.get(f"/api/search/{job['id']}/results")).json()
+            assert job["result_count"] == 1
+            assert [result["naid"] for result in results] == ["222"]
+            assert materialized_naids == ["222"]
+
+
+@pytest.mark.asyncio
+async def test_search_job_requires_compound_surname_match_without_identifier(tmp_path, monkeypatch):
+    isolate_nara_key(monkeypatch, tmp_path, api_key="test-key")
+    monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
+    reset_settings_cache()
+    reset_paths_cache()
+
+    async def fake_run_nara_candidate_search(payload, api_key):
+        return NaraSearchResponse(
+            total=2,
+            raw={"mocked": True},
+            items=[
+                NaraSearchItem(
+                    record=NaraRecord(
+                        naId=555,
+                        title="Paul Schultze correspondence",
+                        description="Architectural correspondence mentioning Weimar.",
+                        digitalObjects=[{"objectUrl": "https://catalog.archives.gov/media/schultze.jpg", "extractedText": "Paul Schultze"}],
+                    ),
+                    raw={"_source": {"record": {"naId": 555}}},
+                ),
+                NaraSearchItem(
+                    record=NaraRecord(
+                        naId=556,
+                        title="Paul Schultze-Naumburg correspondence",
+                        description="Architectural correspondence mentioning Weimar.",
+                        digitalObjects=[
+                            {
+                                "objectUrl": "https://catalog.archives.gov/media/schultze-naumburg.jpg",
+                                "extractedText": "Paul Schultze-Naumburg",
+                            }
+                        ],
+                    ),
+                    raw={"_source": {"record": {"naId": 556}}},
+                ),
+            ],
+        )
+
+    materialized_naids: list[str] = []
+
+    async def fake_materialize_relevant_pages(job_id, naid, record, payload):
+        materialized_naids.append(naid)
+        return [
+            MaterializedPage(
+                object_data=record.digitalObjects[0],
+                page_number=1,
+                image_url=record.digitalObjects[0]["objectUrl"],
+                local_path=None,
+                nara_text=record.digitalObjects[0].get("extractedText"),
+                ocr_text=None,
+                ocr_engine=None,
+            )
+        ]
+
+    monkeypatch.setattr("naratrace.processing.jobs.run_nara_candidate_search", fake_run_nara_candidate_search)
+    monkeypatch.setattr("naratrace.processing.jobs.materialize_relevant_pages", fake_materialize_relevant_pages)
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            create_response = await client.post(
+                "/api/search",
+                json={"first_name": "Paul", "last_name": "Schultze-Naumburg"},
+            )
+            assert create_response.status_code == 201
+            job = await wait_for_terminal_job(client, create_response.json()["id"])
+
+            results = (await client.get(f"/api/search/{job['id']}/results")).json()
+            assert job["result_count"] == 1
+            assert [result["naid"] for result in results] == ["556"]
+            assert materialized_naids == ["556"]
+
+
+@pytest.mark.asyncio
+async def test_search_job_ranks_same_page_profile_matches_above_metadata_only_matches(tmp_path, monkeypatch):
+    isolate_nara_key(monkeypatch, tmp_path, api_key="test-key")
+    monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
+    reset_settings_cache()
+    reset_paths_cache()
+
+    async def fake_run_nara_candidate_search(payload, api_key):
+        return NaraSearchResponse(
+            total=2,
+            raw={"mocked": True},
+            items=[
+                NaraSearchItem(
+                    record=NaraRecord(
+                        naId=777,
+                        title="Paul Schultze-Naumburg membership index",
+                        description="Metadata mentions Mitgliedsnummer 347541 and Naumburg in an 1800 collection note.",
+                        digitalObjects=[
+                            {
+                                "objectUrl": "https://catalog.archives.gov/media/metadata-only.jpg",
+                                "extractedText": "Unrelated typed index page",
+                            }
+                        ],
+                    ),
+                    raw={"_source": {"record": {"naId": 777}}},
+                ),
+                NaraSearchItem(
+                    record=NaraRecord(
+                        naId=778,
+                        title="Paul Schultze-Naumburg membership card",
+                        description="Metadata mentions Mitgliedsnummer 347541 and Naumburg.",
+                        digitalObjects=[
+                            {
+                                "objectUrl": "https://catalog.archives.gov/media/same-page.jpg",
+                                "extractedText": "Paul Schultze-Naumburg 1869 Naumburg Mitgliedsnummer 347541",
+                            }
+                        ],
+                    ),
+                    raw={"_source": {"record": {"naId": 778}}},
+                ),
+            ],
+        )
+
+    async def fake_materialize_relevant_pages(job_id, naid, record, payload):
+        return [
+            MaterializedPage(
+                object_data=record.digitalObjects[0],
+                page_number=1,
+                image_url=record.digitalObjects[0]["objectUrl"],
+                local_path=None,
+                nara_text=record.digitalObjects[0].get("extractedText"),
+                ocr_text=None,
+                ocr_engine=None,
+            )
+        ]
+
+    monkeypatch.setattr("naratrace.processing.jobs.run_nara_candidate_search", fake_run_nara_candidate_search)
+    monkeypatch.setattr("naratrace.processing.jobs.materialize_relevant_pages", fake_materialize_relevant_pages)
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            create_response = await client.post(
+                "/api/search",
+                json={
+                    "first_name": "Paul",
+                    "last_name": "Schultze-Naumburg",
+                    "birth_year": 1869,
+                    "residence_places": "Naumburg",
+                    "membership_number": "347.541",
+                },
+            )
+            assert create_response.status_code == 201
+            job = await wait_for_terminal_job(client, create_response.json()["id"])
+
+            results = (await client.get(f"/api/search/{job['id']}/results")).json()
+            assert [result["naid"] for result in results] == ["778", "777"]
+            assert results[0]["match_score"] > results[1]["match_score"]
+            evidence_labels = [evidence["label"] for evidence in results[0]["evidences"]]
+            assert any("derselben Originalseite" in label for label in evidence_labels)
+
+
+@pytest.mark.asyncio
+async def test_search_job_caps_original_page_materialization_for_large_candidate_sets(tmp_path, monkeypatch):
+    isolate_nara_key(monkeypatch, tmp_path, api_key="test-key")
+    monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
+    reset_settings_cache()
+    reset_paths_cache()
+
+    async def fake_run_nara_candidate_search(payload, api_key):
+        return NaraSearchResponse(
+            total=60,
+            raw={"mocked": True},
+            items=[
+                NaraSearchItem(
+                    record=NaraRecord(
+                        naId=9000 + index,
+                        title=f"Paul Schultze-Naumburg candidate {index}",
+                        description="Metadata mentions Naumburg.",
+                        digitalObjects=[{"objectUrl": f"https://catalog.archives.gov/media/{index}.jpg"}],
+                    ),
+                    raw={"_source": {"record": {"naId": 9000 + index}}},
+                )
+                for index in range(60)
+            ],
+        )
+
+    materialized_naids: list[str] = []
+
+    async def fake_materialize_relevant_pages(job_id, naid, record, payload):
+        materialized_naids.append(naid)
+        return []
+
+    monkeypatch.setattr("naratrace.processing.jobs.run_nara_candidate_search", fake_run_nara_candidate_search)
+    monkeypatch.setattr("naratrace.processing.jobs.materialize_relevant_pages", fake_materialize_relevant_pages)
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            create_response = await client.post(
+                "/api/search",
+                json={"first_name": "Paul", "last_name": "Schultze-Naumburg", "max_candidates": 60},
+            )
+            assert create_response.status_code == 201
+            job = await wait_for_terminal_job(client, create_response.json()["id"])
+
+            assert job["status"] == "complete"
+            assert job["result_count"] == 60
+            assert len(materialized_naids) == 50
+            assert "Originalseiten und OCR" in " ".join(job["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_search_job_keeps_metadata_fallback_candidates_when_strict_filters_would_drop_all(tmp_path, monkeypatch):
+    isolate_nara_key(monkeypatch, tmp_path, api_key="test-key")
+    monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
+    reset_settings_cache()
+    reset_paths_cache()
+
+    async def fake_run_nara_candidate_search(payload, api_key):
+        return NaraSearchResponse(
+            total=1,
+            raw={"mocked": True},
+            warnings=[
+                "NARA lieferte für die Detailabfrage einen temporären Serverfehler; "
+                "NARATrace hat automatisch eine kleinere Metadatenabfrage verwendet."
+            ],
+            items=[
+                NaraSearchItem(
+                    record=NaraRecord(
+                        naId=270566795,
+                        title="Number 719 (Serial 719) (1 of 2)",
+                        generalRecordsTypes=["Textual Records"],
+                        digitalObjects=[
+                            {
+                                "objectUrl": "https://catalog.archives.gov/media/T77-0719-0001.jpg",
+                                "extractedText": "Paul Schultze-Nauburg",
+                            }
+                        ],
+                    ),
+                    raw={"_score": 80.5, "_source": {"record": {"naId": 270566795}}},
+                )
+            ],
+        )
+
+    async def fake_materialize_relevant_pages(job_id, naid, record, payload):
+        return [
+            MaterializedPage(
+                object_data=record.digitalObjects[0],
+                page_number=1,
+                image_url=record.digitalObjects[0]["objectUrl"],
+                local_path=None,
+                nara_text=record.digitalObjects[0].get("extractedText"),
+                ocr_text=None,
+                ocr_engine=None,
+            )
+        ]
+
+    monkeypatch.setattr("naratrace.processing.jobs.run_nara_candidate_search", fake_run_nara_candidate_search)
+    monkeypatch.setattr("naratrace.processing.jobs.materialize_relevant_pages", fake_materialize_relevant_pages)
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            create_response = await client.post(
+                "/api/search",
+                json={
+                    "first_name": "Paul",
+                    "last_name": "Schultze-Naumburg",
+                    "source_categories": ["nsdap_membership_cards"],
+                    "max_candidates": 50,
+                },
+            )
+            assert create_response.status_code == 201
+            job = await wait_for_terminal_job(client, create_response.json()["id"])
+
+            results = (await client.get(f"/api/search/{job['id']}/results")).json()
+            assert job["status"] == "complete"
+            assert job["result_count"] == 1
+            assert results[0]["naid"] == "270566795"
+            assert "Metadatenhinweise" in " ".join(job["warnings"])
+            assert "keine Kandidaten gefunden" not in " ".join(job["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_search_job_filters_selected_source_categories(tmp_path, monkeypatch):
+    isolate_nara_key(monkeypatch, tmp_path, api_key="test-key")
+    monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
+    reset_settings_cache()
+    reset_paths_cache()
+
+    async def fake_run_nara_candidate_search(payload, api_key):
+        return NaraSearchResponse(
+            total=2,
+            raw={"mocked": True},
+            items=[
+                NaraSearchItem(
+                    record=NaraRecord(
+                        naId=333,
+                        title="Paul Schultze-Naumburg portrait photograph",
+                        description="Photograph of Paul Schultze-Naumburg",
+                        generalRecordsTypes=["Photographs and other Graphic Materials"],
+                        digitalObjects=[{"objectUrl": "https://catalog.archives.gov/media/portrait.jpg"}],
+                    ),
+                    raw={"_source": {"record": {"naId": 333}}},
+                ),
+                NaraSearchItem(
+                    record=NaraRecord(
+                        naId=444,
+                        title="Paul Schultze-Naumburg NSDAP membership card",
+                        description="Nazi Party membership card with number 347541.",
+                        generalRecordsTypes=["Textual Records"],
+                        digitalObjects=[{"objectUrl": "https://catalog.archives.gov/media/nsdap-card.jpg", "extractedText": "NSDAP membership card Schultze-Naumburg 347541"}],
+                    ),
+                    raw={"_source": {"record": {"naId": 444}}},
+                ),
+            ],
+        )
+
+    async def fake_materialize_relevant_pages(job_id, naid, record, payload):
+        return [
+            MaterializedPage(
+                object_data=record.digitalObjects[0],
+                page_number=1,
+                image_url=record.digitalObjects[0]["objectUrl"],
+                local_path=None,
+                nara_text=record.digitalObjects[0].get("extractedText"),
+                ocr_text=None,
+                ocr_engine=None,
+            )
+        ]
+
+    monkeypatch.setattr("naratrace.processing.jobs.run_nara_candidate_search", fake_run_nara_candidate_search)
+    monkeypatch.setattr("naratrace.processing.jobs.materialize_relevant_pages", fake_materialize_relevant_pages)
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            create_response = await client.post(
+                "/api/search",
+                json={
+                    "last_name": "Schultze-Naumburg",
+                    "membership_number": "347541",
+                    "source_categories": ["nsdap_membership_cards"],
+                },
+            )
+            assert create_response.status_code == 201
+            job = await wait_for_terminal_job(client, create_response.json()["id"])
+
+            results = (await client.get(f"/api/search/{job['id']}/results")).json()
+            assert job["result_count"] == 2
+            assert [result["naid"] for result in results] == ["444", "333"]
+            assert results[0]["source_category"] == "nsdap_membership_cards"
+            assert results[0]["source_category_label"] == "NSDAP-Karteikarten"
+            assert "Metadatenhinweise" in " ".join(job["warnings"])
 
 
 @pytest.mark.asyncio

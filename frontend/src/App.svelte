@@ -6,6 +6,7 @@
     deleteSearchResult,
     deleteNaraApiKey,
     downloadSearchReport,
+    downloadSearchResultReport,
     fetchHealth,
     fetchSearchHistory,
     fetchSearchJob,
@@ -22,6 +23,7 @@
     type NaraApiUsageResponse,
     type ResultMediaPageResponse,
     type SearchJobResponse,
+    type SearchReportFormat,
     type SearchResultResponse,
     type SettingsResponse
   } from './lib/api';
@@ -45,6 +47,8 @@
     title: string;
     matchScore: number;
     category: string;
+    sourceCategory: string;
+    sourceCategoryLabel: string;
     dataSource: 'NARA' | 'MOCK' | 'LOCAL';
     naid: string;
     textOrigin: string;
@@ -77,6 +81,8 @@
     transcriptText: string | null;
     transcriptSource: string | null;
     transcriptEdited: boolean;
+    matchTerms: string[];
+    matchSnippets: string[];
   };
 
   type DecadeBucket = {
@@ -84,6 +90,12 @@
     label: string;
     count: number;
     percent: number;
+  };
+
+  type SourceCategoryOption = {
+    id: string;
+    label: string;
+    description: string;
   };
 
   type LocalDocumentMatch = {
@@ -110,6 +122,59 @@
   const HISTORY_LOAD_MAX_ATTEMPTS = 8;
   const MAX_SEARCH_CANDIDATES = 2000;
   const NARA_SEARCH_PAGE_SIZE = 100;
+  const OTHER_SOURCE_CATEGORY_ID = 'other';
+  const sourceCategoryOptions: SourceCategoryOption[] = [
+    {
+      id: 'nsdap_membership_cards',
+      label: 'NSDAP-Karteikarten',
+      description: 'Mitgliedskarten, Karteien und NSDAP-Mitgliedschaftsbelege'
+    },
+    {
+      id: 'personnel_service_records',
+      label: 'Personal- und Dienstunterlagen',
+      description: 'Personalakten, Dienstunterlagen und administrative Personenbelege'
+    },
+    {
+      id: 'correspondence_telegrams',
+      label: 'Korrespondenz und Telegramme',
+      description: 'Briefe, Schreiben, Telegramme und Vermerke'
+    },
+    {
+      id: 'reports_publications',
+      label: 'Berichte und Drucksachen',
+      description: 'Berichte, Pressemitteilungen, Magazine, Zeitungen und Bulletins'
+    },
+    {
+      id: 'photographs_portraits',
+      label: 'Fotos und Porträts',
+      description: 'Fotografien, Porträts, Negative und grafisches Material'
+    },
+    {
+      id: 'war_photographs',
+      label: 'Kriegsaufnahmen',
+      description: 'Militärische Fotos, Kampfaufnahmen, Wochenschau- und Kriegsfilmkontext'
+    },
+    {
+      id: 'moving_images',
+      label: 'Film- und Videoaufnahmen',
+      description: 'Moving Images, Newsreels, Film- und MP4-Digitalobjekte'
+    },
+    {
+      id: 'maps_plans',
+      label: 'Karten und Pläne',
+      description: 'Karten, Charts, Pläne und Lagezeichnungen'
+    },
+    {
+      id: 'sound_recordings',
+      label: 'Tonaufnahmen',
+      description: 'Audio, Tonbänder, Interviews und mündliche Überlieferungen'
+    },
+    {
+      id: 'legal_case_files',
+      label: 'Gerichts- und Ermittlungsakten',
+      description: 'Case Files, Ermittlungen, Verfahren, Verhöre und Affidavits'
+    }
+  ];
 
   const demoTranscriptLines: TranscriptLine[] = [
     {
@@ -173,6 +238,8 @@
       title: 'Lokale Demo-Datei: Paul Schultze-Naumburg, NSDAP-Kartei 1931',
       matchScore: 96,
       category: 'sehr wahrscheinlich',
+      sourceCategory: 'nsdap_membership_cards',
+      sourceCategoryLabel: 'NSDAP-Karteikarten',
       dataSource: 'LOCAL',
       naid: 'LOCAL-PDF-SCHULTZE-NAUMBURG-1931',
       textOrigin: 'lokale PDF, manuell transkribierte Demo-Zeilen',
@@ -200,7 +267,9 @@
           mimeType: 'image/png',
           transcriptText: demoTranscriptText,
           transcriptSource: 'manuelle Demo-Transkription',
-          transcriptEdited: false
+          transcriptEdited: false,
+          matchTerms: ['Schultze-Naumburg', '347 541', 'Naumburg'],
+          matchSnippets: ['Name: Schultze-Naumburg, Paul', 'Mitgliedsnummer: 347 541', 'Wohnort: Naumburg']
         }
       ],
       recordYears: [1931],
@@ -213,6 +282,8 @@
       title: 'MOCK-DATENSATZ: ähnliche Schreibweise ohne sichere Lebensdaten',
       matchScore: 58,
       category: 'möglich',
+      sourceCategory: OTHER_SOURCE_CATEGORY_ID,
+      sourceCategoryLabel: 'Sonstige Quellen',
       dataSource: 'MOCK',
       naid: 'MOCK-NAID-0002',
       textOrigin: 'künstlicher Vergleichstreffer',
@@ -239,6 +310,8 @@
       title: 'MOCK-DATENSATZ: widersprüchliche Personendaten',
       matchScore: 34,
       category: 'schwach',
+      sourceCategory: OTHER_SOURCE_CATEGORY_ID,
+      sourceCategoryLabel: 'Sonstige Quellen',
       dataSource: 'MOCK',
       naid: 'MOCK-NAID-0003',
       textOrigin: 'künstlicher Vergleichstreffer',
@@ -273,6 +346,7 @@
   let membershipNumber = '';
   let naid = '';
   let recordGroup = '';
+  let sourceCategories: string[] = [];
   let maxCandidates = 50;
   let searchNotice = '';
   let searchError = '';
@@ -285,9 +359,13 @@
   let searchCancelling = false;
   let currentJob: SearchJobResponse | null = null;
   let currentResults: DisplayResult[] = [];
+  let currentResultCategoryFilters: string[] = [];
+  let currentDecadeFilter: number | null = null;
   let historyJobs: SearchJobResponse[] = [];
   let selectedHistoryJob: SearchJobResponse | null = null;
   let selectedHistoryResults: DisplayResult[] = [];
+  let historyResultCategoryFilters: string[] = [];
+  let historyDecadeFilter: number | null = null;
   let historyLoading = false;
   let historyResultsLoading = false;
   let deletingJobId = '';
@@ -295,6 +373,7 @@
   let historyError = '';
   let historyHint = '';
   let exportingJobId = '';
+  let exportingResultKey = '';
   let exportNotice = '';
   let exportError = '';
   let localDocumentFile: File | null = null;
@@ -324,6 +403,8 @@
   let selectedMediaIndexes: Record<string, number> = {};
   let mediaZoomLevels: Record<string, number> = {};
   let mediaPanOffsets: Record<string, { x: number; y: number }> = {};
+  let mediaRotations: Record<string, number> = {};
+  let fullscreenResult: DisplayResult | null = null;
   let draggingMedia:
     | {
         key: string;
@@ -350,6 +431,10 @@
     searchRuntimeEstimateSeconds
   );
   $: localDocumentMatches = buildLocalDocumentMatches(localDocumentResult, localDocumentTerms);
+  $: currentSourceFilteredResults = filterDisplayResultsBySourceCategories(currentResults, currentResultCategoryFilters);
+  $: historySourceFilteredResults = filterDisplayResultsBySourceCategories(selectedHistoryResults, historyResultCategoryFilters);
+  $: visibleCurrentResults = filterDisplayResultsByDecade(currentSourceFilteredResults, currentDecadeFilter);
+  $: visibleHistoryResults = filterDisplayResultsByDecade(historySourceFilteredResults, historyDecadeFilter);
   $: currentSearchSubmitLabel = searchLoading ? (currentJob ? 'Suchjob läuft...' : 'Lege Suchjob an...') : 'Suchjob anlegen';
 
   onMount(() => {
@@ -394,9 +479,94 @@
 
   function sortDisplayResults(results: DisplayResult[]): DisplayResult[] {
     return [...results].sort((left, right) => {
+      const leftYear = firstResultYear(left);
+      const rightYear = firstResultYear(right);
+      if (leftYear !== rightYear) {
+        return leftYear - rightYear;
+      }
       const displayPriority = Number(Boolean(firstDisplayableMediaPage(right))) - Number(Boolean(firstDisplayableMediaPage(left)));
-      return displayPriority || right.matchScore - left.matchScore;
+      return displayPriority || right.matchScore - left.matchScore || left.sourceCategoryLabel.localeCompare(right.sourceCategoryLabel, 'de-DE');
     });
+  }
+
+  function firstResultYear(result: DisplayResult) {
+    return result.recordYears.length > 0 ? Math.min(...result.recordYears) : Number.MAX_SAFE_INTEGER;
+  }
+
+  function filterDisplayResultsBySourceCategories(results: DisplayResult[], filters: string[]) {
+    if (filters.length === 0) {
+      return results;
+    }
+    const selected = new Set(filters);
+    return results.filter((result) => selected.has(result.sourceCategory));
+  }
+
+  function filterDisplayResultsByDecade(results: DisplayResult[], decade: number | null) {
+    if (decade === null) {
+      return results;
+    }
+    return results.filter((result) => resultMatchesDecade(result, decade));
+  }
+
+  function resultMatchesDecade(result: DisplayResult, decade: number) {
+    return result.recordYears.some((year) => Number.isFinite(year) && Math.floor(year / 10) * 10 === decade);
+  }
+
+  function toggleSourceCategory(categoryId: string, checked: boolean) {
+    sourceCategories = updateCategorySelection(sourceCategories, categoryId, checked);
+  }
+
+  function toggleCurrentResultCategory(categoryId: string, checked: boolean) {
+    currentResultCategoryFilters = updateCategorySelection(currentResultCategoryFilters, categoryId, checked);
+    currentDecadeFilter = null;
+  }
+
+  function toggleHistoryResultCategory(categoryId: string, checked: boolean) {
+    historyResultCategoryFilters = updateCategorySelection(historyResultCategoryFilters, categoryId, checked);
+    historyDecadeFilter = null;
+  }
+
+  function resetCurrentResultFilters() {
+    currentResultCategoryFilters = [];
+    currentDecadeFilter = null;
+  }
+
+  function resetHistoryResultFilters() {
+    historyResultCategoryFilters = [];
+    historyDecadeFilter = null;
+  }
+
+  function setCurrentDecadeFilter(decade: number) {
+    currentDecadeFilter = decade;
+  }
+
+  function setHistoryDecadeFilter(decade: number) {
+    historyDecadeFilter = decade;
+  }
+
+  function decadeLabel(decade: number | null) {
+    return decade === null ? 'alle Jahrzehnte' : `${decade}er`;
+  }
+
+  function updateCategorySelection(current: string[], categoryId: string, checked: boolean) {
+    const next = new Set(current);
+    if (checked) {
+      next.add(categoryId);
+    } else {
+      next.delete(categoryId);
+    }
+    return sourceCategoryOptions.map((option) => option.id).filter((id) => next.has(id));
+  }
+
+  function sourceCategoryLabel(categoryId: string) {
+    return sourceCategoryOptions.find((option) => option.id === categoryId)?.label ?? 'Sonstige Quellen';
+  }
+
+  function activeSourceCategoryLabels(filters: string[]) {
+    if (filters.length === 0) {
+      return 'alle Quellenarten';
+    }
+    return filters.map(sourceCategoryLabel).join(', ');
   }
 
   function sourceBadgeClass(source: DisplayResult['dataSource']) {
@@ -465,7 +635,7 @@
       queued: 'Suchlauf wird angelegt',
       preparing_search: 'Suchprofil, Varianten und Abfrage werden vorbereitet',
       searching_catalog: 'NARA Catalog wird abgefragt',
-      downloading_pages_ocr: 'Originalseiten werden geladen und OCR wird vorbereitet',
+      downloading_pages_ocr: 'Originalseiten und Textquellen werden geprüft',
       ranking: 'Treffer werden bewertet und lokal gespeichert',
       complete: 'Suche abgeschlossen',
       failed: 'Suche fehlgeschlagen',
@@ -506,14 +676,22 @@
   }
 
   function estimatedTotalRuntimeLabel(job: SearchJobResponse | null, elapsedSeconds: number, estimateSeconds: number) {
-    return `ca. ${formatEstimatedDuration(estimateSeconds || initialSearchRuntimeEstimate(job))}`;
+    const estimate = estimateSeconds || initialSearchRuntimeEstimate(job);
+    if (job && !terminalJobStatus(job.status) && elapsedSeconds > Math.max(estimate * 1.35, estimate + 60)) {
+      return 'läuft länger als erwartet';
+    }
+    return `ca. ${formatEstimatedDuration(estimate)}`;
   }
 
   function estimatedRemainingRuntimeLabel(job: SearchJobResponse | null, elapsedSeconds: number, estimateSeconds: number) {
     if (job && terminalJobStatus(job.status)) {
       return '0 s';
     }
-    const remainingSeconds = estimateSeconds - elapsedSeconds;
+    const estimate = estimateSeconds || initialSearchRuntimeEstimate(job);
+    if (job && elapsedSeconds > Math.max(estimate * 1.35, estimate + 60)) {
+      return 'unbekannt';
+    }
+    const remainingSeconds = estimate - elapsedSeconds;
     if (remainingSeconds <= 0) return 'ca. < 5 s';
     return `ca. ${formatEstimatedDuration(remainingSeconds)}`;
   }
@@ -522,7 +700,8 @@
     if (job?.mock_mode) return 8;
     const candidateBudget = clampSearchCandidates(maxCandidates);
     const pageRequests = Math.max(1, Math.ceil(candidateBudget / NARA_SEARCH_PAGE_SIZE));
-    return 20 + candidateBudget * 0.7 + (pageRequests - 1) * 4;
+    const materializedCandidates = Math.min(candidateBudget, 50);
+    return 18 + candidateBudget * 0.12 + materializedCandidates * 1.4 + (pageRequests - 1) * 4;
   }
 
   function updateSearchRuntimeEstimate(job: SearchJobResponse | null) {
@@ -623,28 +802,64 @@
     }
   }
 
-  async function downloadResearchReport(job: SearchJobResponse | null) {
+  function reportFormatLabel(format: SearchReportFormat) {
+    const labels: Record<SearchReportFormat, string> = {
+      md: 'Markdown',
+      pdf: 'PDF',
+      zip: 'ZIP-Archiv'
+    };
+    return labels[format];
+  }
+
+  function exportJobKey(job: SearchJobResponse, format: SearchReportFormat) {
+    return `${job.id}:${format}`;
+  }
+
+  function downloadBlob(report: { blob: Blob; filename: string }) {
+    const url = URL.createObjectURL(report.blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = report.filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function downloadResearchReport(job: SearchJobResponse | null, format: SearchReportFormat = 'md') {
     if (!job || exportingJobId) {
       return;
     }
-    exportingJobId = job.id;
+    exportingJobId = exportJobKey(job, format);
     exportNotice = '';
     exportError = '';
     try {
-      const report = await downloadSearchReport(job.id);
-      const url = URL.createObjectURL(report.blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = report.filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-      exportNotice = 'Recherchebericht wurde erzeugt.';
+      const report = await downloadSearchReport(job.id, format);
+      downloadBlob(report);
+      exportNotice = `${reportFormatLabel(format)} wurde erzeugt.`;
     } catch (error) {
       exportError = error instanceof Error ? error.message : 'Der Recherchebericht konnte nicht erstellt werden.';
     } finally {
       exportingJobId = '';
+    }
+  }
+
+  async function downloadResultPdf(result: DisplayResult) {
+    if (!result.jobId || result.resultId === null || exportingResultKey) {
+      return;
+    }
+    const exportKey = `${result.jobId}:${result.resultId}:pdf`;
+    exportingResultKey = exportKey;
+    exportNotice = '';
+    exportError = '';
+    try {
+      const report = await downloadSearchResultReport(result.jobId, result.resultId);
+      downloadBlob(report);
+      exportNotice = 'Treffer-PDF wurde erzeugt.';
+    } catch (error) {
+      exportError = error instanceof Error ? error.message : 'Der Trefferbericht konnte nicht erstellt werden.';
+    } finally {
+      exportingResultKey = '';
     }
   }
 
@@ -794,6 +1009,8 @@
       title: result.title ?? 'Ohne Titel',
       matchScore: result.match_score,
       category: result.category,
+      sourceCategory: result.source_category ?? (isLocal ? 'nsdap_membership_cards' : OTHER_SOURCE_CATEGORY_ID),
+      sourceCategoryLabel: result.source_category_label ?? (isLocal ? 'NSDAP-Karteikarten' : 'Sonstige Quellen'),
       dataSource: result.data_source,
       naid: result.naid,
       textOrigin: result.text_origin,
@@ -831,7 +1048,9 @@
           mimeType: 'image/png',
           transcriptText: demoTranscriptText,
           transcriptSource: 'manuelle Demo-Transkription',
-          transcriptEdited: false
+          transcriptEdited: false,
+          matchTerms: ['Schultze-Naumburg', '347 541', 'Naumburg'],
+          matchSnippets: ['Name: Schultze-Naumburg, Paul', 'Mitgliedsnummer: 347 541', 'Wohnort: Naumburg']
         }
       ];
     }
@@ -851,7 +1070,9 @@
           mimeType: null,
           transcriptText: result.transcript_text,
           transcriptSource: result.transcript_source,
-          transcriptEdited: result.transcript_edited
+          transcriptEdited: result.transcript_edited,
+          matchTerms: [],
+          matchSnippets: []
         }
       ];
     }
@@ -870,7 +1091,9 @@
       mimeType: page.mime_type,
       transcriptText: page.transcript_text,
       transcriptSource: page.transcript_source,
-      transcriptEdited: page.transcript_edited
+      transcriptEdited: page.transcript_edited,
+      matchTerms: page.match_terms ?? [],
+      matchSnippets: page.match_snippets ?? []
     };
   }
 
@@ -900,6 +1123,15 @@
     return Math.min(Math.max(index, 0), maxIndex);
   }
 
+  function firstMatchedMediaIndex(result: DisplayResult) {
+    const matchedIndex = result.mediaPages.findIndex((page) => page.matchTerms.length > 0);
+    if (matchedIndex >= 0) {
+      return matchedIndex;
+    }
+    const displayableIndex = result.mediaPages.findIndex((page) => Boolean(page.mediaUrl));
+    return displayableIndex >= 0 ? displayableIndex : 0;
+  }
+
   function currentMediaPage(result: DisplayResult): DisplayMediaPage | null {
     if (result.mediaPages.length === 0) {
       return null;
@@ -920,6 +1152,19 @@
     resetMediaTransform(result);
   }
 
+  function jumpToMatchedPage(result: DisplayResult, page: DisplayMediaPage) {
+    const index = result.mediaPages.findIndex((candidate) => candidate.pageId === page.pageId && candidate.label === page.label);
+    if (index >= 0) {
+      setMediaPage(result, index);
+      pinnedLineId = '';
+      hoveredLineId = '';
+    }
+  }
+
+  function matchedMediaPages(result: DisplayResult) {
+    return result.mediaPages.filter((page) => page.matchTerms.length > 0);
+  }
+
   function previousMediaPage(result: DisplayResult) {
     setMediaPage(result, currentMediaIndex(result) - 1);
   }
@@ -936,9 +1181,13 @@
     return mediaPanOffsets[result.key] ?? { x: 0, y: 0 };
   }
 
+  function mediaRotation(result: DisplayResult) {
+    return mediaRotations[result.key] ?? 0;
+  }
+
   function mediaTransformStyle(result: DisplayResult) {
     const pan = mediaPan(result);
-    return `transform: translate(${pan.x}px, ${pan.y}px) scale(${mediaZoom(result)});`;
+    return `transform: translate(${pan.x}px, ${pan.y}px) rotate(${mediaRotation(result)}deg) scale(${mediaZoom(result)});`;
   }
 
   function zoomMedia(result: DisplayResult, delta: number) {
@@ -953,15 +1202,34 @@
   function resetMediaTransform(result: DisplayResult) {
     mediaZoomLevels = { ...mediaZoomLevels, [result.key]: 1 };
     mediaPanOffsets = { ...mediaPanOffsets, [result.key]: { x: 0, y: 0 } };
+    mediaRotations = { ...mediaRotations, [result.key]: 0 };
     if (draggingMedia?.key === result.key) {
       draggingMedia = null;
     }
     refreshMediaViewer(result);
   }
 
+  function rotateMedia(result: DisplayResult, degrees: number) {
+    const nextRotation = (mediaRotation(result) + degrees + 360) % 360;
+    mediaRotations = { ...mediaRotations, [result.key]: nextRotation };
+    refreshMediaViewer(result);
+  }
+
+  function openMediaFullscreen(result: DisplayResult) {
+    fullscreenResult = result;
+  }
+
+  function closeMediaFullscreen() {
+    fullscreenResult = null;
+    draggingMedia = null;
+  }
+
   function refreshMediaViewer(result: DisplayResult) {
     if (detailResult?.key === result.key) {
       detailResult = { ...detailResult };
+    }
+    if (fullscreenResult?.key === result.key) {
+      fullscreenResult = { ...fullscreenResult };
     }
     if (currentResults.some((item) => item.key === result.key)) {
       currentResults = [...currentResults];
@@ -1109,6 +1377,8 @@
   function openResultDetail(result: DisplayResult, origin: DetailOrigin) {
     detailResult = result;
     detailOrigin = origin;
+    selectedMediaIndexes = { ...selectedMediaIndexes, [result.key]: firstMatchedMediaIndex(result) };
+    resetMediaTransform(result);
     hoveredLineId = '';
     pinnedLineId = '';
     transcriptDraft = result.transcriptText;
@@ -1172,6 +1442,7 @@
     searchCancelling = false;
     currentJob = null;
     currentResults = [];
+    currentDecadeFilter = null;
     updateSearchRuntimeEstimate(null);
     startSearchTimer();
     try {
@@ -1185,6 +1456,7 @@
         membership_number: membershipNumber.trim() || undefined,
         naid: naid.trim() || undefined,
         record_group: recordGroup.trim() || undefined,
+        source_categories: sourceCategories,
         max_candidates: clampSearchCandidates(maxCandidates)
       });
       currentJob = startedJob;
@@ -1201,6 +1473,8 @@
       if (currentJob?.status === 'complete') {
         const results = await fetchSearchResults(startedJob.id);
         currentResults = sortDisplayResults(results.map(displayResultFromResponse));
+        currentResultCategoryFilters = [...sourceCategories];
+        currentDecadeFilter = null;
         searchNotice = `Suchjob für "${name}" abgeschlossen. ${currentJob.result_count} Treffer gespeichert.`;
       } else if (currentJob?.status === 'failed') {
         searchError = currentJob.error_message ?? 'Der Suchjob konnte nicht abgeschlossen werden.';
@@ -1236,6 +1510,8 @@
   async function openHistoryJob(job: SearchJobResponse) {
     selectedHistoryJob = job;
     selectedHistoryResults = [];
+    historyResultCategoryFilters = [];
+    historyDecadeFilter = null;
     historyResultsLoading = true;
     historyError = '';
     historyHint = '';
@@ -1624,6 +1900,28 @@
             <input bind:value={maxCandidates} type="number" min="1" max={MAX_SEARCH_CANDIDATES} />
           </label>
         </fieldset>
+        <fieldset class="source-category-fieldset">
+          <legend>Quellenarten</legend>
+          <div class="source-category-intro">
+            <strong>{sourceCategories.length === 0 ? 'Alle Quellenarten' : activeSourceCategoryLabels(sourceCategories)}</strong>
+            <button class="button secondary compact-button" type="button" onclick={() => (sourceCategories = [])}>Alle zulassen</button>
+          </div>
+          <div class="checkbox-grid">
+            {#each sourceCategoryOptions as option}
+              <label class="checkbox-option">
+                <input
+                  type="checkbox"
+                  checked={sourceCategories.includes(option.id)}
+                  onchange={(event) => toggleSourceCategory(option.id, (event.currentTarget as HTMLInputElement).checked)}
+                />
+                <span>
+                  <strong>{option.label}</strong>
+                  <small>{option.description}</small>
+                </span>
+              </label>
+            {/each}
+          </div>
+        </fieldset>
         <button class="button" type="submit" disabled={searchLoading}>
           {currentSearchSubmitLabel}
         </button>
@@ -1749,10 +2047,26 @@
             <button
               class="button secondary"
               type="button"
-              onclick={() => downloadResearchReport(currentJob)}
-              disabled={exportingJobId === currentJob.id}
+              onclick={() => downloadResearchReport(currentJob, 'md')}
+              disabled={exportingJobId === exportJobKey(currentJob, 'md')}
             >
-              {exportingJobId === currentJob.id ? 'Erzeuge Bericht...' : 'Recherchebericht exportieren'}
+              {exportingJobId === exportJobKey(currentJob, 'md') ? 'Erzeuge Markdown...' : 'Markdown exportieren'}
+            </button>
+            <button
+              class="button secondary"
+              type="button"
+              onclick={() => downloadResearchReport(currentJob, 'pdf')}
+              disabled={exportingJobId === exportJobKey(currentJob, 'pdf')}
+            >
+              {exportingJobId === exportJobKey(currentJob, 'pdf') ? 'Erzeuge PDF...' : 'Ausführliche PDF exportieren'}
+            </button>
+            <button
+              class="button secondary"
+              type="button"
+              onclick={() => downloadResearchReport(currentJob, 'zip')}
+              disabled={exportingJobId === exportJobKey(currentJob, 'zip')}
+            >
+              {exportingJobId === exportJobKey(currentJob, 'zip') ? 'Packe ZIP...' : 'Suchverlauf als ZIP'}
             </button>
           </div>
         </section>
@@ -1764,8 +2078,27 @@
         <p class="error">{exportError}</p>
       {/if}
       {#if currentResults.length > 0}
-        {@const currentDecadeBuckets = decadeBucketsFor(currentResults)}
+        {@const currentDecadeBuckets = decadeBucketsFor(currentSourceFilteredResults)}
         <section class="results" aria-label="Suchergebnisse">
+          <section class="source-filter-panel" aria-label="Quellenart-Filter">
+            <div>
+              <span class="eyebrow">Quellenfilter</span>
+              <strong>{activeSourceCategoryLabels(currentResultCategoryFilters)}</strong>
+            </div>
+            <button class="button secondary compact-button" type="button" onclick={resetCurrentResultFilters}>Alle anzeigen</button>
+            <div class="checkbox-grid compact-checkbox-grid">
+              {#each sourceCategoryOptions as option}
+                <label class="checkbox-option compact-checkbox-option">
+                  <input
+                    type="checkbox"
+                    checked={currentResultCategoryFilters.includes(option.id)}
+                    onchange={(event) => toggleCurrentResultCategory(option.id, (event.currentTarget as HTMLInputElement).checked)}
+                  />
+                  <span>{option.label}</span>
+                </label>
+              {/each}
+            </div>
+          </section>
           {#if currentDecadeBuckets.length > 0}
             <section class="decade-overview" aria-label="Treffer nach Jahrzehnt">
               <div class="section-heading">
@@ -1775,31 +2108,46 @@
               <div class="decade-chart-wrap">
                 <div class="decade-chart">
                   {#each currentDecadeBuckets as bucket}
-                    <div class="decade-column">
+                    <button
+                      class="decade-column"
+                      class:active={currentDecadeFilter === bucket.decade}
+                      type="button"
+                      aria-pressed={currentDecadeFilter === bucket.decade}
+                      aria-label={`Treffer aus den ${bucket.label} anzeigen`}
+                      onclick={() => setCurrentDecadeFilter(bucket.decade)}
+                    >
                       <span class="decade-count">{bucket.count}</span>
                       <span class="decade-bar" style={`height: ${bucket.percent}%;`}></span>
                       <span class="decade-label">{bucket.label}</span>
-                    </div>
+                    </button>
                   {/each}
                 </div>
               </div>
-              {#if undatedResultCount(currentResults) > 0}
-                <p class="decade-note">{undatedResultCount(currentResults)} Treffer ohne auswertbare Jahresangabe.</p>
+              {#if currentDecadeFilter !== null}
+                <div class="decade-filter-note">
+                  <span>Aktiver Zeitraum: {decadeLabel(currentDecadeFilter)}</span>
+                  <button class="button secondary compact-button" type="button" onclick={() => (currentDecadeFilter = null)}>Alle Jahrzehnte anzeigen</button>
+                </div>
+              {/if}
+              {#if undatedResultCount(currentSourceFilteredResults) > 0}
+                <p class="decade-note">{undatedResultCount(currentSourceFilteredResults)} Treffer ohne auswertbare Jahresangabe.</p>
               {/if}
             </section>
           {/if}
           <div class="section-heading">
             <span class="eyebrow">Treffer</span>
-            <h2>Nach Trefferwahrscheinlichkeit</h2>
+            <h2>{currentDecadeFilter === null ? 'Chronologisch nach Quellenjahr' : `Quellen aus den ${decadeLabel(currentDecadeFilter)}`}</h2>
           </div>
-          <div class="result-card-list">
-            {#each currentResults as result}
+          {#if visibleCurrentResults.length > 0}
+            <div class="result-card-list">
+              {#each visibleCurrentResults as result}
               <article class="result-card" aria-label={`Treffer ${result.name}`}>
                 <div class="result-card-header">
                   <div>
                     <div class="match-topline">
-                    <span class={`source-badge ${sourceBadgeClass(result.dataSource)}`}>{result.dataSource}</span>
-                    <span class="score-pill">{scoreLabel(result.matchScore)}</span>
+                      <span class={`source-badge ${sourceBadgeClass(result.dataSource)}`}>{result.dataSource}</span>
+                      <span class="source-category-pill">{result.sourceCategoryLabel}</span>
+                      <span class="score-pill">{scoreLabel(result.matchScore)}</span>
                     </div>
                     <h3>{result.name}</h3>
                     <p>{result.category} · Trefferwahrscheinlichkeit {scoreLabel(result.matchScore)} · {result.naid}</p>
@@ -1828,18 +2176,28 @@
                               Weiter
                             </button>
                           {/if}
-                          {#if mediaPage.mediaType === 'image' && mediaPage.mediaUrl}
-                            <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(result, 0.25)}>+</button>
-                            <span>{Math.round(mediaZoom(result) * 100)} %</span>
-                            <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(result, -0.25)}>-</button>
-                            <button class="button secondary compact-button" type="button" onclick={() => resetMediaTransform(result)}>Reset</button>
-                          {/if}
-                        </div>
-                      {/if}
-                      {#if mediaPage?.mediaUrl && mediaPage.mediaType === 'image'}
-                        <div class="document-stage interactive-media-stage">
-                          <div
-                            class="media-pan-layer"
+                {#if mediaPage.mediaType === 'image' && mediaPage.mediaUrl}
+                  <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(result, 0.25)}>+</button>
+                  <span>{Math.round(mediaZoom(result) * 100)} %</span>
+                  <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(result, -0.25)}>-</button>
+                  <button class="button secondary compact-button" type="button" onclick={() => rotateMedia(result, 90)}>Drehen</button>
+                  <button class="button secondary compact-button" type="button" onclick={() => openMediaFullscreen(result)}>Vollbild</button>
+                  <button class="button secondary compact-button" type="button" onclick={() => resetMediaTransform(result)}>Reset</button>
+                {:else if mediaPage.mediaUrl}
+                  <button class="button secondary compact-button" type="button" onclick={() => openMediaFullscreen(result)}>Vollbild</button>
+                {/if}
+              </div>
+            {/if}
+            {#if mediaPage?.mediaUrl && mediaPage.mediaType === 'image'}
+              <div class="document-stage interactive-media-stage">
+                {#if mediaPage.matchTerms.length > 0}
+                  <div class="media-match-ribbon">
+                    <strong>Trefferseite</strong>
+                    <span>{mediaPage.matchTerms.join(', ')}</span>
+                  </div>
+                {/if}
+                <div
+                  class="media-pan-layer"
                             class:dragging={draggingMedia?.key === result.key}
                             role="application"
                             aria-label={`Bildanzeige ${mediaPage.label}`}
@@ -1976,8 +2334,14 @@
                   </section>
                 </div>
               </article>
-            {/each}
-          </div>
+              {/each}
+            </div>
+          {:else}
+            <div class="empty-state compact-empty">
+              <h2>Keine Treffer für diesen Quellenfilter</h2>
+              <p>Wähle weitere Quellenarten aus oder setze den Filter zurück.</p>
+            </div>
+          {/if}
         </section>
       {:else if currentJob && currentJob.status === 'failed'}
         <div class="empty-state">
@@ -2102,10 +2466,26 @@
                 <button
                   class="button secondary"
                   type="button"
-                  onclick={() => downloadResearchReport(selectedHistoryJob)}
-                  disabled={exportingJobId === selectedHistoryJob.id}
+                  onclick={() => downloadResearchReport(selectedHistoryJob, 'md')}
+                  disabled={exportingJobId === exportJobKey(selectedHistoryJob, 'md')}
                 >
-                  {exportingJobId === selectedHistoryJob.id ? 'Erzeuge Bericht...' : 'Recherchebericht exportieren'}
+                  {exportingJobId === exportJobKey(selectedHistoryJob, 'md') ? 'Erzeuge Markdown...' : 'Markdown exportieren'}
+                </button>
+                <button
+                  class="button secondary"
+                  type="button"
+                  onclick={() => downloadResearchReport(selectedHistoryJob, 'pdf')}
+                  disabled={exportingJobId === exportJobKey(selectedHistoryJob, 'pdf')}
+                >
+                  {exportingJobId === exportJobKey(selectedHistoryJob, 'pdf') ? 'Erzeuge PDF...' : 'Ausführliche PDF exportieren'}
+                </button>
+                <button
+                  class="button secondary"
+                  type="button"
+                  onclick={() => downloadResearchReport(selectedHistoryJob, 'zip')}
+                  disabled={exportingJobId === exportJobKey(selectedHistoryJob, 'zip')}
+                >
+                  {exportingJobId === exportJobKey(selectedHistoryJob, 'zip') ? 'Packe ZIP...' : 'Suchverlauf als ZIP'}
                 </button>
               </div>
             </div>
@@ -2124,7 +2504,26 @@
             {#if historyResultsLoading}
               <p class="muted">Lade Treffer...</p>
             {:else if selectedHistoryResults.length > 0}
-              {@const historyDecadeBuckets = decadeBucketsFor(selectedHistoryResults)}
+              {@const historyDecadeBuckets = decadeBucketsFor(historySourceFilteredResults)}
+              <section class="source-filter-panel" aria-label="Quellenart-Filter im Suchverlauf">
+                <div>
+                  <span class="eyebrow">Quellenfilter</span>
+                  <strong>{activeSourceCategoryLabels(historyResultCategoryFilters)}</strong>
+                </div>
+                <button class="button secondary compact-button" type="button" onclick={resetHistoryResultFilters}>Alle anzeigen</button>
+                <div class="checkbox-grid compact-checkbox-grid">
+                  {#each sourceCategoryOptions as option}
+                    <label class="checkbox-option compact-checkbox-option">
+                      <input
+                        type="checkbox"
+                        checked={historyResultCategoryFilters.includes(option.id)}
+                        onchange={(event) => toggleHistoryResultCategory(option.id, (event.currentTarget as HTMLInputElement).checked)}
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  {/each}
+                </div>
+              </section>
               {#if historyDecadeBuckets.length > 0}
                 <section class="decade-overview" aria-label="Treffer nach Jahrzehnt">
                   <div class="section-heading">
@@ -2134,25 +2533,39 @@
                   <div class="decade-chart-wrap">
                     <div class="decade-chart">
                       {#each historyDecadeBuckets as bucket}
-                        <div class="decade-column">
+                        <button
+                          class="decade-column"
+                          class:active={historyDecadeFilter === bucket.decade}
+                          type="button"
+                          aria-pressed={historyDecadeFilter === bucket.decade}
+                          aria-label={`Treffer aus den ${bucket.label} anzeigen`}
+                          onclick={() => setHistoryDecadeFilter(bucket.decade)}
+                        >
                           <span class="decade-count">{bucket.count}</span>
                           <span class="decade-bar" style={`height: ${bucket.percent}%;`}></span>
                           <span class="decade-label">{bucket.label}</span>
-                        </div>
+                        </button>
                       {/each}
                     </div>
                   </div>
-                  {#if undatedResultCount(selectedHistoryResults) > 0}
-                    <p class="decade-note">{undatedResultCount(selectedHistoryResults)} Treffer ohne auswertbare Jahresangabe.</p>
+                  {#if historyDecadeFilter !== null}
+                    <div class="decade-filter-note">
+                      <span>Aktiver Zeitraum: {decadeLabel(historyDecadeFilter)}</span>
+                      <button class="button secondary compact-button" type="button" onclick={() => (historyDecadeFilter = null)}>Alle Jahrzehnte anzeigen</button>
+                    </div>
+                  {/if}
+                  {#if undatedResultCount(historySourceFilteredResults) > 0}
+                    <p class="decade-note">{undatedResultCount(historySourceFilteredResults)} Treffer ohne auswertbare Jahresangabe.</p>
                   {/if}
                 </section>
               {/if}
               <div class="section-heading history-results-heading">
                 <span class="eyebrow">Trefferliste</span>
-                <h2>Nach Trefferwahrscheinlichkeit</h2>
+                <h2>{historyDecadeFilter === null ? 'Chronologisch nach Quellenjahr' : `Quellen aus den ${decadeLabel(historyDecadeFilter)}`}</h2>
               </div>
-              <div class="ranked-list history-ranked-list">
-                {#each selectedHistoryResults as result}
+              {#if visibleHistoryResults.length > 0}
+                <div class="ranked-list history-ranked-list">
+                  {#each visibleHistoryResults as result}
                   <article class="history-result-entry" aria-label={`Treffer ${result.name}`}>
                     <button
                       class="match-row"
@@ -2176,6 +2589,7 @@
                       <span class="match-summary">
                         <span class="match-topline">
                           <span class={`source-badge ${sourceBadgeClass(result.dataSource)}`}>{result.dataSource}</span>
+                          <span class="source-category-pill">{result.sourceCategoryLabel}</span>
                           <span class="score-pill">{scoreLabel(result.matchScore)}</span>
                         </span>
                         <span class="match-name">{result.name}</span>
@@ -2197,8 +2611,14 @@
                       {deletingResultId === result.resultId ? 'Lösche...' : 'Treffer löschen'}
                     </button>
                   </article>
-                {/each}
-              </div>
+                  {/each}
+                </div>
+              {:else}
+                <div class="empty-state compact-empty">
+                  <h2>Keine Treffer für diesen Quellenfilter</h2>
+                  <p>Wähle weitere Quellenarten aus oder setze den Filter zurück.</p>
+                </div>
+              {/if}
             {:else}
               <div class="empty-state compact-empty">
                 <h2>Keine Treffer gespeichert</h2>
@@ -2219,11 +2639,30 @@
       <div class="detail-header">
         <button class="button secondary" type="button" onclick={backFromDetail}>Zurück</button>
         <div>
-          <span class={`source-badge ${sourceBadgeClass(detailResult.dataSource)}`}>{detailResult.dataSource}</span>
+          <span class="match-topline">
+            <span class={`source-badge ${sourceBadgeClass(detailResult.dataSource)}`}>{detailResult.dataSource}</span>
+            <span class="source-category-pill">{detailResult.sourceCategoryLabel}</span>
+          </span>
           <h1>{detailResult.name}</h1>
           <p>{detailResult.category} · Trefferwahrscheinlichkeit {scoreLabel(detailResult.matchScore)} · {detailResult.naid}</p>
+          <div class="actions report-actions">
+            <button
+              class="button secondary"
+              type="button"
+              onclick={() => downloadResultPdf(detailResult)}
+              disabled={detailResult.resultId === null || exportingResultKey === `${detailResult.jobId}:${detailResult.resultId}:pdf`}
+            >
+              {exportingResultKey === `${detailResult.jobId}:${detailResult.resultId}:pdf` ? 'Erzeuge Treffer-PDF...' : 'Treffer-PDF exportieren'}
+            </button>
+          </div>
         </div>
       </div>
+      {#if exportNotice}
+        <p class="notice">{exportNotice}</p>
+      {/if}
+      {#if exportError}
+        <p class="error">{exportError}</p>
+      {/if}
 
       <div class="detail-shell">
         <section class="original-pane" aria-label="Originalseite">
@@ -2248,12 +2687,22 @@
                   <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(detailResult, 0.25)}>+</button>
                   <span>{Math.round(mediaZoom(detailResult) * 100)} %</span>
                   <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(detailResult, -0.25)}>-</button>
+                  <button class="button secondary compact-button" type="button" onclick={() => rotateMedia(detailResult, 90)}>Drehen</button>
+                  <button class="button secondary compact-button" type="button" onclick={() => openMediaFullscreen(detailResult)}>Vollbild</button>
                   <button class="button secondary compact-button" type="button" onclick={() => resetMediaTransform(detailResult)}>Reset</button>
+                {:else if mediaPage.mediaUrl}
+                  <button class="button secondary compact-button" type="button" onclick={() => openMediaFullscreen(detailResult)}>Vollbild</button>
                 {/if}
               </div>
             {/if}
             {#if mediaPage?.mediaUrl && mediaPage.mediaType === 'image'}
               <div class="document-stage interactive-media-stage">
+                {#if mediaPage.matchTerms.length > 0}
+                  <div class="media-match-ribbon">
+                    <strong>Trefferseite</strong>
+                    <span>{mediaPage.matchTerms.join(', ')}</span>
+                  </div>
+                {/if}
                 <div
                   class="media-pan-layer"
                   class:dragging={draggingMedia?.key === detailResult.key}
@@ -2287,6 +2736,12 @@
               </div>
             {:else if mediaPage?.mediaUrl && mediaPage.mediaType === 'video'}
               <div class="video-stage">
+                {#if mediaPage.matchTerms.length > 0}
+                  <div class="media-match-ribbon">
+                    <strong>Trefferseite</strong>
+                    <span>{mediaPage.matchTerms.join(', ')}</span>
+                  </div>
+                {/if}
                 <!-- svelte-ignore a11y_media_has_caption -->
                 <video src={mediaPage.mediaUrl} controls preload="metadata"></video>
               </div>
@@ -2331,6 +2786,26 @@
               {detailResult.residencePlace}
             </span>
           </div>
+
+          {#if matchedMediaPages(detailResult).length > 0}
+            <div class="match-jump-panel">
+              <span class="eyebrow">Trefferstellen</span>
+              {#each matchedMediaPages(detailResult) as page}
+                <button
+                  class="match-jump-button"
+                  class:active={currentMediaPage(detailResult)?.pageId === page.pageId}
+                  type="button"
+                  onclick={() => jumpToMatchedPage(detailResult, page)}
+                >
+                  <strong>{page.label}</strong>
+                  <span>{page.matchTerms.join(', ')}</span>
+                  {#if page.matchSnippets.length > 0}
+                    <small>{page.matchSnippets[0]}</small>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
 
           {#if transcriptRowsFor(detailResult).length > 0}
             <div class="transcript-lines">
@@ -2714,6 +3189,62 @@
     </section>
   {/if}
 </main>
+
+{#if fullscreenResult}
+  {@const fullscreenPage = currentMediaPage(fullscreenResult)}
+  <div class="media-fullscreen" role="dialog" aria-modal="true" aria-label="Vollbild-Medienanzeige">
+    <div class="media-fullscreen-toolbar">
+      <strong>{currentMediaLabel(fullscreenResult)}</strong>
+      <div class="media-fullscreen-actions">
+        {#if fullscreenResult.mediaPages.length > 1}
+          <button class="button secondary compact-button" type="button" onclick={() => previousMediaPage(fullscreenResult)} disabled={currentMediaIndex(fullscreenResult) === 0}>
+            Zurück
+          </button>
+          <span>{currentMediaIndex(fullscreenResult) + 1} / {fullscreenResult.mediaPages.length}</span>
+          <button class="button secondary compact-button" type="button" onclick={() => nextMediaPage(fullscreenResult)} disabled={currentMediaIndex(fullscreenResult) >= fullscreenResult.mediaPages.length - 1}>
+            Weiter
+          </button>
+        {/if}
+        {#if fullscreenPage?.mediaType === 'image' && fullscreenPage.mediaUrl}
+          <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(fullscreenResult, 0.25)}>+</button>
+          <span>{Math.round(mediaZoom(fullscreenResult) * 100)} %</span>
+          <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(fullscreenResult, -0.25)}>-</button>
+          <button class="button secondary compact-button" type="button" onclick={() => rotateMedia(fullscreenResult, 90)}>Drehen</button>
+          <button class="button secondary compact-button" type="button" onclick={() => resetMediaTransform(fullscreenResult)}>Reset</button>
+        {/if}
+        <button class="button secondary compact-button" type="button" onclick={closeMediaFullscreen}>Schließen</button>
+      </div>
+    </div>
+    {#if fullscreenPage?.mediaUrl && fullscreenPage.mediaType === 'image'}
+      <div class="document-stage interactive-media-stage fullscreen-stage">
+        {#if fullscreenPage.matchTerms.length > 0}
+          <div class="media-match-ribbon">
+            <strong>Trefferseite</strong>
+            <span>{fullscreenPage.matchTerms.join(', ')}</span>
+          </div>
+        {/if}
+        <div
+          class="media-pan-layer"
+          class:dragging={draggingMedia?.key === fullscreenResult.key}
+          role="application"
+          aria-label={`Vollbild ${fullscreenPage.label}`}
+          style={mediaTransformStyle(fullscreenResult)}
+          onpointerdown={(event) => beginMediaPan(event, fullscreenResult)}
+          onpointermove={(event) => moveMediaPan(event, fullscreenResult)}
+          onpointerup={(event) => endMediaPan(event, fullscreenResult)}
+          onpointercancel={(event) => endMediaPan(event, fullscreenResult)}
+        >
+          <img src={fullscreenPage.mediaUrl} alt={fullscreenPage.label} draggable="false" />
+        </div>
+      </div>
+    {:else if fullscreenPage?.mediaUrl && fullscreenPage.mediaType === 'video'}
+      <div class="video-stage fullscreen-stage">
+        <!-- svelte-ignore a11y_media_has_caption -->
+        <video src={fullscreenPage.mediaUrl} controls autoplay preload="metadata"></video>
+      </div>
+    {/if}
+  </div>
+{/if}
 
 <footer>
   NARATrace ist ein unabhängiges, inoffizielles Forschungswerkzeug. Es steht nicht in Verbindung mit der

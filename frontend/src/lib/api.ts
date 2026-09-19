@@ -19,6 +19,7 @@ export type SearchRequest = {
   membership_number?: string;
   naid?: string;
   record_group?: string;
+  source_categories?: string[];
   max_candidates: number;
   demo_mode?: boolean;
 };
@@ -74,6 +75,8 @@ export type ResultMediaPageResponse = {
   transcript_text: string | null;
   transcript_source: string | null;
   transcript_edited: boolean;
+  match_terms?: string[];
+  match_snippets?: string[];
 };
 
 export type SearchResultResponse = {
@@ -81,6 +84,8 @@ export type SearchResultResponse = {
   job_id: string;
   match_score: number;
   category: string;
+  source_category?: string | null;
+  source_category_label?: string | null;
   suspected_person_name: string | null;
   birth_date: string | null;
   birth_place: string | null;
@@ -135,6 +140,8 @@ export type SearchReportDownload = {
   filename: string;
 };
 
+export type SearchReportFormat = 'md' | 'pdf' | 'zip';
+
 export async function fetchHealth(): Promise<HealthResponse> {
   const response = await fetch('/api/health');
   if (!response.ok) {
@@ -173,16 +180,28 @@ export async function fetchSearchJob(jobId: string): Promise<SearchJobResponse> 
   return response.json() as Promise<SearchJobResponse>;
 }
 
-export async function downloadSearchReport(jobId: string): Promise<SearchReportDownload> {
-  const response = await fetch(`/api/search/${jobId}/export.md`);
+export async function downloadSearchReport(jobId: string, format: SearchReportFormat = 'md'): Promise<SearchReportDownload> {
+  const response = await fetch(`/api/search/${jobId}/export.${format}`);
   if (!response.ok) {
     throw new Error('Der Recherchebericht konnte nicht erstellt werden.');
   }
+  return downloadFromResponse(response, `naratrace-recherchebericht-${jobId}.${format}`);
+}
+
+export async function downloadSearchResultReport(jobId: string, resultId: number): Promise<SearchReportDownload> {
+  const response = await fetch(`/api/search/${jobId}/results/${resultId}/export.pdf`);
+  if (!response.ok) {
+    throw new Error('Der Trefferbericht konnte nicht erstellt werden.');
+  }
+  return downloadFromResponse(response, `naratrace-treffer-${resultId}.pdf`);
+}
+
+async function downloadFromResponse(response: Response, fallbackFilename: string): Promise<SearchReportDownload> {
   const disposition = response.headers.get('content-disposition') ?? '';
   const match = /filename="([^"]+)"/.exec(disposition);
   return {
     blob: await response.blob(),
-    filename: match?.[1] ?? `naratrace-recherchebericht-${jobId}.md`
+    filename: match?.[1] ?? fallbackFilename
   };
 }
 

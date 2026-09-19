@@ -24,7 +24,9 @@ DOWNLOAD_TIMEOUT_SECONDS = 30.0
 OCR_TIMEOUT_SECONDS = 20
 BROWSER_DISPLAY_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 BROWSER_VIDEO_SUFFIXES = {".mp4", ".webm", ".ogg", ".ogv"}
-MAX_MEDIA_PAGES_PER_RESULT = 12
+MAX_MEDIA_PAGES_PER_RESULT = 6
+MAX_OCR_PAGES_PER_RESULT = 1
+MAX_DIGITAL_OBJECTS_FOR_INLINE_OCR = 120
 
 
 @dataclass(frozen=True)
@@ -54,16 +56,41 @@ async def materialize_relevant_pages(job_id: str, naid: str, record: NaraRecord,
     best_choice = choose_relevant_digital_object(record, payload)
     best_index = best_choice[0] if best_choice else (choices[0][0] if choices else None)
     pages: list[MaterializedPage] = []
+    ocr_budget = MAX_OCR_PAGES_PER_RESULT
+    allow_inline_ocr_for_record = len(record.digitalObjects) <= MAX_DIGITAL_OBJECTS_FOR_INLINE_OCR
     for index, digital_object in choices:
-        pages.append(await materialize_digital_object(job_id, naid, index, digital_object, is_relevant=index == best_index))
+        is_relevant = index == best_index
+        nara_text = extract_digital_object_text(digital_object)
+        allow_ocr = allow_inline_ocr_for_record and is_relevant and not nara_text and ocr_budget > 0
+        if allow_ocr:
+            ocr_budget -= 1
+        pages.append(
+            await materialize_digital_object(
+                job_id,
+                naid,
+                index,
+                digital_object,
+                is_relevant=is_relevant,
+                allow_ocr=allow_ocr,
+                allow_download=allow_inline_ocr_for_record,
+                known_nara_text=nara_text,
+            )
+        )
     return pages
 
 
 async def materialize_digital_object(
-    job_id: str, naid: str, index: int, digital_object: dict[str, Any], is_relevant: bool = True
+    job_id: str,
+    naid: str,
+    index: int,
+    digital_object: dict[str, Any],
+    is_relevant: bool = True,
+    allow_ocr: bool = True,
+    allow_download: bool = True,
+    known_nara_text: str | None = None,
 ) -> MaterializedPage:
     image_url = extract_object_url(digital_object)
-    nara_text = extract_digital_object_text(digital_object)
+    nara_text = known_nara_text if known_nara_text is not None else extract_digital_object_text(digital_object)
     local_path: str | None = None
     ocr_text: str | None = None
     ocr_engine: str | None = None
@@ -71,15 +98,16 @@ async def materialize_digital_object(
 
     if image_url and is_probable_video_object(digital_object):
         warning = None
-    elif image_url:
+    elif image_url and allow_download and should_download_digital_object(image_url, nara_text, allow_ocr):
         try:
             downloaded = await download_digital_object(job_id, naid, index, image_url)
             local_image = ensure_display_image(downloaded)
             local_path = str(local_image)
-            ocr_source = downloaded if is_image_file(downloaded) else local_image
-            ocr_text = extract_local_ocr(ocr_source)
-            if ocr_text:
-                ocr_engine = "Tesseract"
+            if allow_ocr and not nara_text:
+                ocr_source = downloaded if is_image_file(downloaded) else local_image
+                ocr_text = extract_local_ocr(ocr_source)
+                if ocr_text:
+                    ocr_engine = "Tesseract"
         except Exception as exc:
             warning = f"Digitalobjekt {image_url} konnte nicht lokal geladen oder per OCR verarbeitet werden: {exc}"
 
@@ -94,6 +122,12 @@ async def materialize_digital_object(
         warning=warning,
         is_relevant=is_relevant,
     )
+
+
+def should_download_digital_object(image_url: str, nara_text: str | None, allow_ocr: bool) -> bool:
+    if allow_ocr and not nara_text:
+        return True
+    return not is_browser_display_url(image_url)
 
 
 def choose_relevant_digital_object(record: NaraRecord, payload: SearchRequest) -> tuple[int, dict[str, Any]] | None:
@@ -111,7 +145,7 @@ def choose_relevant_digital_objects(
     record: NaraRecord, payload: SearchRequest, limit: int = MAX_MEDIA_PAGES_PER_RESULT
 ) -> list[tuple[int, dict[str, Any]]]:
     scored = score_digital_objects(record, payload)
-    scored.sort(key=lambda item: item[1])
+    scored.sort(reverse=True, key=lambda item: (item[0], -item[1]))
     return [(index, data) for _, index, data in scored[:limit]]
 
 

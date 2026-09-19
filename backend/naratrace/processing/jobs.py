@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 import unicodedata
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -49,10 +50,129 @@ LOCAL_DEMO_PDF_PATH = Path.home() / "Downloads" / "SchulzeNaumburg_NSDAP_Kartei1
 LOCAL_DEMO_PDF_SERIES = "A3340-MFKL-R0013.pdf"
 LOCAL_DEMO_PDF_PAGE_COUNT = 4
 NARA_QUERY_MAX_LENGTH = 1024
+NARA_SEARCH_MAX_QUERIES = 8
 NARA_SEARCH_PAGE_SIZE = 100
 NARA_SEARCH_MAX_CANDIDATES = 2000
+NARA_STORE_MAX_CANDIDATES = 300
+NARA_MATERIALIZE_MAX_CANDIDATES = 50
+NARA_RELAXED_METADATA_HINTS = 25
 RECORD_YEAR_PATTERN = re.compile(r"\b(17\d{2}|18\d{2}|19\d{2}|20\d{2})\b")
 TERMINAL_JOB_STATUSES = {"complete", "failed", "cancelled"}
+OTHER_SOURCE_CATEGORY_ID = "other"
+OTHER_SOURCE_CATEGORY_LABEL = "Sonstige Quellen"
+
+
+@dataclass(frozen=True)
+class SourceCategoryDefinition:
+    id: str
+    label: str
+    type_of_materials: tuple[str, ...]
+    query_terms: tuple[str, ...]
+    match_terms: tuple[str, ...]
+    media_suffixes: tuple[str, ...] = ()
+    requires_keyword: bool = False
+
+
+SOURCE_CATEGORY_DEFINITIONS: tuple[SourceCategoryDefinition, ...] = (
+    SourceCategoryDefinition(
+        id="nsdap_membership_cards",
+        label="NSDAP-Karteikarten",
+        type_of_materials=("Textual Records",),
+        query_terms=(
+            "A3340-MFKL",
+            "Mitgliedskarte",
+            "NSDAP membership card",
+            "Nazi Party membership card",
+            "A3340",
+            "National Socialist German Workers Party membership",
+            "NSDAP Kartei",
+        ),
+        match_terms=(
+            "A3340-MFKL",
+            "NSDAP",
+            "Nazi Party",
+            "National Socialist German Workers Party",
+            "membership card",
+            "Mitgliedskarte",
+            "Karteikarte",
+            "A3340",
+        ),
+        requires_keyword=True,
+    ),
+    SourceCategoryDefinition(
+        id="personnel_service_records",
+        label="Personal- und Dienstunterlagen",
+        type_of_materials=("Textual Records",),
+        query_terms=("personnel file", "service record", "personnel record", "staff file", "employee record"),
+        match_terms=("personnel file", "service record", "personnel record", "staff file", "employee record", "Personalakte"),
+        requires_keyword=True,
+    ),
+    SourceCategoryDefinition(
+        id="correspondence_telegrams",
+        label="Korrespondenz und Telegramme",
+        type_of_materials=("Textual Records",),
+        query_terms=("correspondence", "letter", "telegram", "memorandum"),
+        match_terms=("correspondence", "letter", "telegram", "memorandum", "Schreiben", "Brief"),
+        requires_keyword=True,
+    ),
+    SourceCategoryDefinition(
+        id="reports_publications",
+        label="Berichte und Drucksachen",
+        type_of_materials=("Textual Records",),
+        query_terms=("report", "publication", "press release", "bulletin", "newspaper", "magazine"),
+        match_terms=("report", "publication", "press release", "bulletin", "newspaper", "magazine", "Bericht"),
+        requires_keyword=True,
+    ),
+    SourceCategoryDefinition(
+        id="photographs_portraits",
+        label="Fotos und Porträts",
+        type_of_materials=("Photographs and other Graphic Materials",),
+        query_terms=("photograph", "portrait", "photo", "negative", "print"),
+        match_terms=("photograph", "portrait", "photo", "negative", "print", "image", "jpg", "jpeg", "tif", "tiff"),
+        media_suffixes=(".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".tiff"),
+    ),
+    SourceCategoryDefinition(
+        id="war_photographs",
+        label="Kriegsaufnahmen",
+        type_of_materials=("Photographs and other Graphic Materials", "Moving Images"),
+        query_terms=("war photograph", "combat photograph", "military photograph", "World War II", "battle", "wartime"),
+        match_terms=("war", "combat", "military", "World War II", "World War 2", "battle", "wartime", "Krieg"),
+        media_suffixes=(".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".tiff", ".mp4", ".webm", ".mov"),
+        requires_keyword=True,
+    ),
+    SourceCategoryDefinition(
+        id="moving_images",
+        label="Film- und Videoaufnahmen",
+        type_of_materials=("Moving Images",),
+        query_terms=("moving image", "motion picture", "newsreel", "film", "video"),
+        match_terms=("moving image", "motion picture", "newsreel", "film", "video", "mp4", "webm"),
+        media_suffixes=(".mp4", ".webm", ".ogg", ".ogv", ".mov"),
+    ),
+    SourceCategoryDefinition(
+        id="maps_plans",
+        label="Karten und Pläne",
+        type_of_materials=("Maps and Charts",),
+        query_terms=("map", "chart", "plan", "aerial map"),
+        match_terms=("map", "chart", "plan", "Karte", "Lageplan"),
+    ),
+    SourceCategoryDefinition(
+        id="sound_recordings",
+        label="Tonaufnahmen",
+        type_of_materials=("Sound Recordings",),
+        query_terms=("sound recording", "audio", "oral history", "tape"),
+        match_terms=("sound recording", "audio", "oral history", "tape", "mp3", "wav"),
+        media_suffixes=(".mp3", ".wav", ".m4a", ".ogg"),
+    ),
+    SourceCategoryDefinition(
+        id="legal_case_files",
+        label="Gerichts- und Ermittlungsakten",
+        type_of_materials=("Textual Records",),
+        query_terms=("case file", "investigation", "court", "trial", "interrogation", "affidavit"),
+        match_terms=("case file", "investigation", "court", "trial", "interrogation", "affidavit", "Ermittlung"),
+        requires_keyword=True,
+    ),
+)
+SOURCE_CATEGORY_BY_ID = {category.id: category for category in SOURCE_CATEGORY_DEFINITIONS}
 
 
 async def create_search_job(payload: SearchRequest) -> SearchJobResponse:
@@ -254,11 +374,15 @@ def get_search_results(job_id: str) -> list[SearchResultResponse] | None:
                 .selectinload(CandidateRecord.digital_objects)
                 .selectinload(DigitalObject.pages)
                 .selectinload(CandidatePage.manual_corrections),
+                selectinload(SearchResult.job)
+                .selectinload(SearchJob.profile)
+                .selectinload(SearchProfile.fields)
+                .selectinload(SearchField.variants),
                 selectinload(SearchResult.evidences),
             )
             .order_by(desc(SearchResult.match_score))
         ).all()
-        return [serialize_result(result) for result in results]
+        return sort_search_result_responses([serialize_result(result) for result in results])
 
 
 def delete_search_job(job_id: str) -> bool:
@@ -345,6 +469,10 @@ def load_result_for_serialization(session: Session, job_id: str, result_id: int)
             .selectinload(CandidateRecord.digital_objects)
             .selectinload(DigitalObject.pages)
             .selectinload(CandidatePage.manual_corrections),
+            selectinload(SearchResult.job)
+            .selectinload(SearchJob.profile)
+            .selectinload(SearchProfile.fields)
+            .selectinload(SearchField.variants),
             selectinload(SearchResult.evidences),
         )
     )
@@ -391,6 +519,7 @@ def add_profile_fields(session: Session, profile: SearchProfile, payload: Search
         ("identifiers", "membership_number", payload.membership_number, 2.0),
         ("archive", "naid", payload.naid, 2.0),
         ("archive", "record_group", payload.record_group, 1.0),
+        ("sources", "source_categories", source_category_profile_value(payload), 0.8),
         ("limits", "max_candidates", str(payload.max_candidates), 0.5),
     ]
     for section, field_name, value, weight in fields:
@@ -432,6 +561,9 @@ def add_queries(session: Session, job: SearchJob, payload: SearchRequest) -> Non
         query_parts.append(payload.membership_number)
     if payload.record_group:
         query_parts.append(payload.record_group)
+    category_labels = source_category_labels(payload)
+    if category_labels:
+        query_parts.append(", ".join(category_labels))
     query_text = " ".join(part for part in query_parts if part).strip()
     session.add(
         SearchQuery(
@@ -447,6 +579,7 @@ def add_queries(session: Session, job: SearchJob, payload: SearchRequest) -> Non
                 "membership_number": payload.membership_number,
                 "naid": payload.naid,
                 "record_group": payload.record_group,
+                "source_categories": selected_source_category_ids(payload),
             },
             result_count=0,
         )
@@ -457,25 +590,41 @@ async def run_nara_candidate_search(payload: SearchRequest, api_key: str) -> Nar
     client = NaraCatalogClient(api_key=api_key)
     requested_candidates = max(1, min(payload.max_candidates, NARA_SEARCH_MAX_CANDIDATES))
     items = []
+    seen_naids: set[str] = set()
     warnings: list[str] = []
     total: int | None = None
     page_count = 0
-    page = 1
+    query_count = 0
 
-    while len(items) < requested_candidates:
-        page_limit = min(NARA_SEARCH_PAGE_SIZE, requested_candidates - len(items))
-        response = await client.search_records(build_nara_params(payload, page=page, limit=page_limit))
-        page_count += 1
-        if total is None:
-            total = response.total
-        warnings.extend(response.warnings)
-        items.extend(response.items)
+    for query in build_nara_queries(payload):
+        query_count += 1
+        page = 1
+        query_total: int | None = None
+        while len(items) < requested_candidates:
+            page_limit = min(NARA_SEARCH_PAGE_SIZE, requested_candidates - len(items))
+            response = await client.search_records(build_nara_params(payload, page=page, limit=page_limit, query=query))
+            page_count += 1
+            if total is None:
+                total = response.total
+            if query_total is None:
+                query_total = response.total
+            warnings.extend(response.warnings)
+            new_items = 0
+            for item in response.items:
+                naid = str(item.record.naId or "").strip()
+                if not naid or naid in seen_naids:
+                    continue
+                seen_naids.add(naid)
+                items.append(item)
+                new_items += 1
 
-        if len(response.items) < page_limit:
-            break
-        if total is not None and len(items) >= total:
-            break
-        page += 1
+            if len(response.items) < page_limit:
+                break
+            if query_total is not None and page * NARA_SEARCH_PAGE_SIZE >= query_total:
+                break
+            if new_items == 0 and page > 3:
+                break
+            page += 1
 
     return NaraSearchResponse(
         items=items[:requested_candidates],
@@ -484,13 +633,14 @@ async def run_nara_candidate_search(payload: SearchRequest, api_key: str) -> Nar
             "requested_candidates": requested_candidates,
             "page_count": page_count,
             "page_size": NARA_SEARCH_PAGE_SIZE,
+            "query_count": query_count,
             "total": total,
         },
         warnings=dedupe_warnings(warnings),
     )
 
 
-def build_nara_params(payload: SearchRequest, page: int = 1, limit: int | None = None) -> dict[str, Any]:
+def build_nara_params(payload: SearchRequest, page: int = 1, limit: int | None = None, query: str | None = None) -> dict[str, Any]:
     effective_limit = max(1, min(limit or payload.max_candidates, NARA_SEARCH_PAGE_SIZE))
     params: dict[str, Any] = {
         "limit": effective_limit,
@@ -500,11 +650,14 @@ def build_nara_params(payload: SearchRequest, page: int = 1, limit: int | None =
     }
     if payload.naid and payload.naid.strip().isdigit():
         params["naId_is"] = int(payload.naid.strip())
-        params["q"] = payload.last_name
+        params["q"] = query or payload.last_name
     else:
-        params["q"] = build_nara_query(payload)
+        params["q"] = query or build_nara_query(payload)
     if payload.record_group:
         params["recordGroupNumber"] = payload.record_group.strip()
+    material_filters = source_category_type_of_materials(payload)
+    if material_filters:
+        params["typeOfMaterials"] = material_filters[0] if len(material_filters) == 1 else material_filters
     return params
 
 
@@ -520,13 +673,52 @@ def dedupe_warnings(warnings: list[str]) -> list[str]:
     return deduped
 
 
+def build_nara_queries(payload: SearchRequest) -> list[str]:
+    broad_query = build_nara_query(payload)
+    identifier_queries: list[str] = []
+    name_queries: list[str] = []
+    full_name_variants = build_full_name_variants(payload)
+    surname_variants = build_surname_search_variants(payload.last_name)
+    digits = re.sub(r"\D+", "", payload.membership_number or "")
+    category_terms = source_category_query_terms(payload)
+
+    if digits:
+        identifier_queries.extend(f"{variant} {digits}" for variant in full_name_variants[:4])
+        identifier_queries.extend(f"{digits} {term}" for term in category_terms[:6])
+        identifier_queries.extend([digits, payload.membership_number or ""])
+    name_queries.extend(full_name_variants)
+    name_queries.extend(surname_variants)
+
+    category_queries: list[str] = []
+    if category_terms:
+        category_name_terms = prioritize_exact_names_for_source_categories(payload, full_name_variants)[:6]
+        category_surname_terms = prioritize_exact_names_for_source_categories(payload, surname_variants)[:4]
+        for name_term in [*category_name_terms, *category_surname_terms]:
+            for category_term in category_terms[:6]:
+                category_queries.append(f"{name_term} {category_term}")
+
+    queries = [sanitize_nara_query_term(term) for term in [*identifier_queries, *category_queries, *name_queries] if term]
+    if broad_query:
+        queries.append(broad_query)
+    deduped = dedupe_query_terms([query for query in queries if query])
+    return deduped[:NARA_SEARCH_MAX_QUERIES] or [sanitize_nara_query_term(payload.last_name)]
+
+
+def prioritize_exact_names_for_source_categories(payload: SearchRequest, variants: list[str]) -> list[str]:
+    if not selected_source_category_ids(payload):
+        return variants
+    return sorted(variants, key=lambda variant: (is_common_ocr_name_variant(variant), variants.index(variant)))
+
+
+def is_common_ocr_name_variant(value: str) -> bool:
+    normalized = normalize_text(value)
+    return "nauburg" in normalized and "naumburg" not in normalized
+
+
 def build_nara_query(payload: SearchRequest) -> str:
     clauses: list[str] = []
-    full_name = " ".join(value for value in [payload.first_name, payload.last_name] if value).strip()
-    if full_name:
-        clauses.append(full_name)
-    if payload.last_name:
-        clauses.append(payload.last_name)
+    clauses.extend(build_full_name_variants(payload))
+    clauses.extend(build_surname_search_variants(payload.last_name))
     if payload.membership_number:
         digits = re.sub(r"\D+", "", payload.membership_number)
         if digits:
@@ -540,6 +732,71 @@ def build_nara_query(payload: SearchRequest) -> str:
         clauses.extend(line.strip() for line in payload.variants.splitlines() if line.strip())
     terms = dedupe_query_terms([sanitize_nara_query_term(clause) for clause in clauses])
     return join_nara_query_terms(terms) or sanitize_nara_query_term(payload.last_name) or payload.last_name
+
+
+def build_full_name_variants(payload: SearchRequest) -> list[str]:
+    surname_variants = build_full_surname_variants(payload.last_name)
+    if not payload.first_name:
+        return surname_variants
+    return dedupe_query_terms(build_full_person_name_variants(payload) + surname_variants)
+
+
+def build_full_person_name_variants(payload: SearchRequest) -> list[str]:
+    if not payload.first_name:
+        return []
+    first_name = payload.first_name.strip()
+    return dedupe_query_terms([f"{first_name} {surname}" for surname in build_full_surname_variants(payload.last_name)])
+
+
+def build_surname_search_variants(last_name: str | None) -> list[str]:
+    if not last_name:
+        return []
+    raw = last_name.strip()
+    spaced = sanitize_nara_query_term(raw)
+    tokens = [token for token in re.split(r"[\s-]+", raw) if token]
+    joined = "".join(tokens)
+    variants = build_full_surname_variants(last_name)
+    variants.extend(tokens)
+    base_values = [raw, spaced, joined, *tokens]
+    variants.extend(build_schultze_schulze_variants(value) for value in base_values)
+    for value in base_values:
+        variants.extend(prioritize_common_ocr_name_variants(value))
+    return dedupe_query_terms([variant for variant in variants if variant])
+
+
+def build_full_surname_variants(last_name: str | None) -> list[str]:
+    if not last_name:
+        return []
+    raw = last_name.strip()
+    spaced = sanitize_nara_query_term(raw)
+    tokens = [token for token in re.split(r"[\s-]+", raw) if token]
+    joined = "".join(tokens)
+    base_values = [raw, spaced, joined]
+    variants: list[str] = []
+    for value in base_values:
+        variants.extend(prioritize_common_ocr_name_variants(value))
+    variants.extend(build_schultze_schulze_variants(value) for value in base_values)
+    return dedupe_query_terms([variant for variant in variants if variant])
+
+
+def build_schultze_schulze_variants(value: str) -> str:
+    return re.sub("schultze", "schulze", value, flags=re.IGNORECASE)
+
+
+def build_common_ocr_name_variants(value: str) -> list[str]:
+    variants: list[str] = []
+    if re.search("naumburg", value, flags=re.IGNORECASE):
+        variants.append(re.sub("naumburg", "nauburg", value, flags=re.IGNORECASE))
+    if re.search("nauburg", value, flags=re.IGNORECASE):
+        variants.append(re.sub("nauburg", "naumburg", value, flags=re.IGNORECASE))
+    return variants
+
+
+def prioritize_common_ocr_name_variants(value: str) -> list[str]:
+    variants = build_common_ocr_name_variants(value)
+    if re.search("naumburg", value, flags=re.IGNORECASE):
+        return [*variants, value]
+    return [value, *variants]
 
 
 def sanitize_nara_query_term(value: str) -> str:
@@ -574,19 +831,141 @@ def dedupe_query_terms(values: list[str]) -> list[str]:
     return result
 
 
+def selected_source_category_ids(payload: SearchRequest) -> list[str]:
+    return dedupe_query_terms([category_id for category_id in payload.source_categories if category_id in SOURCE_CATEGORY_BY_ID])
+
+
+def source_category_labels(payload: SearchRequest) -> list[str]:
+    return [SOURCE_CATEGORY_BY_ID[category_id].label for category_id in selected_source_category_ids(payload)]
+
+
+def source_category_profile_value(payload: SearchRequest) -> str | None:
+    labels = source_category_labels(payload)
+    return "\n".join(labels) if labels else None
+
+
+def source_category_type_of_materials(payload: SearchRequest) -> list[str]:
+    material_types: list[str] = []
+    for category_id in selected_source_category_ids(payload):
+        material_types.extend(SOURCE_CATEGORY_BY_ID[category_id].type_of_materials)
+    return dedupe_query_terms(material_types)
+
+
+def source_category_query_terms(payload: SearchRequest) -> list[str]:
+    terms: list[str] = []
+    for category_id in selected_source_category_ids(payload):
+        terms.extend(SOURCE_CATEGORY_BY_ID[category_id].query_terms)
+    return dedupe_query_terms(terms)
+
+
+def record_matches_selected_source_categories(payload: SearchRequest, record: NaraRecord) -> bool:
+    category_ids = selected_source_category_ids(payload)
+    if not category_ids:
+        return True
+    return any(record_matches_source_category(record, SOURCE_CATEGORY_BY_ID[category_id]) for category_id in category_ids)
+
+
+def classify_record_source_category(record: CandidateRecord | NaraRecord, preferred_ids: list[str] | None = None) -> tuple[str, str]:
+    category_ids = preferred_ids or [category.id for category in SOURCE_CATEGORY_DEFINITIONS]
+    for category_id in category_ids:
+        category = SOURCE_CATEGORY_BY_ID.get(category_id)
+        if category and record_matches_source_category(record, category):
+            return category.id, category.label
+    return OTHER_SOURCE_CATEGORY_ID, OTHER_SOURCE_CATEGORY_LABEL
+
+
+def record_matches_source_category(record: CandidateRecord | NaraRecord, category: SourceCategoryDefinition) -> bool:
+    haystack = normalize_text(" ".join(record_source_strings(record)))
+    if not haystack:
+        return False
+    keyword_match = any(normalize_text(term) in haystack for term in [*category.match_terms, *category.query_terms])
+    material_match = any(normalize_text(material) in haystack for material in category.type_of_materials)
+    suffix_match = any(haystack_contains_media_suffix(haystack, suffix) for suffix in category.media_suffixes)
+    if category.requires_keyword:
+        return keyword_match
+    return keyword_match or material_match or suffix_match
+
+
+def haystack_contains_media_suffix(haystack: str, suffix: str) -> bool:
+    normalized_suffix = normalize_text(suffix.lstrip("."))
+    return bool(normalized_suffix and re.search(rf"\b{re.escape(normalized_suffix)}\b", haystack))
+
+
+def record_source_strings(record: CandidateRecord | NaraRecord) -> list[str]:
+    if isinstance(record, CandidateRecord):
+        values: list[Any] = [
+            record.title,
+            record.description,
+            record.record_group,
+            record.series,
+            record.local_identifier,
+            record.original_url,
+            record.text_origin,
+            record.raw_metadata,
+        ]
+        for digital_object in record.digital_objects:
+            values.extend(
+                [
+                    digital_object.object_type,
+                    digital_object.url,
+                    digital_object.thumbnail_url,
+                    digital_object.file_name,
+                    digital_object.mime_type,
+                ]
+            )
+        return collect_record_strings(values)
+    return collect_record_strings(record.model_dump(mode="python", exclude_none=True))
+
+
+def collect_record_strings(value: Any, depth: int = 0) -> list[str]:
+    if depth > 8:
+        return []
+    if isinstance(value, (str, int, float)):
+        return [str(value)]
+    if isinstance(value, dict):
+        strings: list[str] = []
+        for child in value.values():
+            strings.extend(collect_record_strings(child, depth + 1))
+        return strings
+    if isinstance(value, (list, tuple, set)):
+        strings: list[str] = []
+        for child in value:
+            strings.extend(collect_record_strings(child, depth + 1))
+        return strings
+    return []
+
+
 async def store_nara_candidates(job_id: str, payload: SearchRequest, nara_response) -> tuple[int, list[str]]:
     stored = 0
     warnings: list[str] = []
-    seen_naids: set[str] = set()
-    for item in nara_response.items:
+    ranked_items, used_relaxed_ranking = rank_nara_search_items(payload, nara_response.items)
+    store_limit = min(payload.max_candidates, NARA_STORE_MAX_CANDIDATES)
+    materialize_limit = min(store_limit, NARA_MATERIALIZE_MAX_CANDIDATES)
+    if used_relaxed_ranking and ranked_items:
+        warnings.append(
+            "Einige NARA-Kandidaten passen nicht zu allen lokalen Quellenartfiltern; "
+            "NARATrace behält sie als schwächere Metadatenhinweise bei, wenn Name oder NARA-Ranking dafür sprechen."
+        )
+    if len(ranked_items) > materialize_limit:
+        warnings.append(
+            f"Originalseiten und OCR wurden aus Laufzeitgründen auf die {materialize_limit} stärksten Kandidaten begrenzt; "
+            "weitere Treffer bleiben als Metadatenhinweise sichtbar."
+        )
+    if len(ranked_items) > store_limit:
+        warnings.append(
+            f"NARA lieferte {len(ranked_items)} plausible Kandidaten; gespeichert wurden die {store_limit} stärksten nach Vorbewertung."
+        )
+
+    for index, item in enumerate(ranked_items[:store_limit]):
         if is_search_job_cancelled(job_id):
             return stored, warnings
         record = item.record
         naid = str(record.naId or "").strip()
-        if not naid or naid in seen_naids:
+        if not naid:
             continue
-        seen_naids.add(naid)
-        materialized_pages = await materialize_relevant_pages(job_id, naid, record, payload)
+        materialized_pages = []
+        if index < materialize_limit:
+            materialized_pages = await materialize_relevant_pages(job_id, naid, record, payload)
         for materialized_page in materialized_pages:
             if materialized_page.warning:
                 warnings.append(f"NAID {naid}: {materialized_page.warning}")
@@ -596,6 +975,65 @@ async def store_nara_candidates(job_id: str, payload: SearchRequest, nara_respon
                 return stored, warnings
             stored += store_nara_candidate(session, job, payload, item, materialized_pages)
     return stored, warnings
+
+
+def rank_nara_search_items(payload: SearchRequest, items: list[Any]) -> tuple[list[Any], bool]:
+    strict_ranked: list[tuple[float, float, int, Any]] = []
+    coherent_relaxed_ranked: list[tuple[float, float, int, Any]] = []
+    relaxed_ranked: list[tuple[float, float, int, Any]] = []
+    seen_naids: set[str] = set()
+    for index, item in enumerate(items):
+        record = item.record
+        naid = str(record.naId or "").strip()
+        if not naid or naid in seen_naids:
+            continue
+        score, _, _ = score_record(payload, record)
+        nara_score = extract_nara_item_score(item)
+        has_coherent_name = is_record_name_coherent(payload, record)
+        matches_source_category = record_matches_selected_source_categories(payload, record)
+        seen_naids.add(naid)
+        if has_coherent_name and matches_source_category:
+            strict_ranked.append((score, nara_score, index, item))
+        elif has_coherent_name:
+            coherent_relaxed_ranked.append((max(0, score - 8), nara_score, index, item))
+        else:
+            relaxed_score = score
+            if not matches_source_category:
+                relaxed_score -= 8
+            relaxed_score -= 18
+            relaxed_ranked.append((max(0, relaxed_score), nara_score, index, item))
+
+    if strict_ranked:
+        strict_ranked.sort(key=lambda entry: (-entry[0], -entry[1], entry[2]))
+        coherent_relaxed_ranked.sort(key=lambda entry: (-entry[0], -entry[1], entry[2]))
+        relaxed_ranked.sort(key=lambda entry: (-entry[1], -entry[0], entry[2]))
+        nara_ranked_hints = [entry for entry in relaxed_ranked if entry[1] > 0][:NARA_RELAXED_METADATA_HINTS]
+        ranked = [*strict_ranked, *coherent_relaxed_ranked, *nara_ranked_hints]
+        return [item for _, _, _, item in ranked], bool(coherent_relaxed_ranked or nara_ranked_hints)
+
+    if coherent_relaxed_ranked:
+        coherent_relaxed_ranked.sort(key=lambda entry: (-entry[0], -entry[1], entry[2]))
+        relaxed_ranked.sort(key=lambda entry: (-entry[1], -entry[0], entry[2]))
+        nara_ranked_hints = [entry for entry in relaxed_ranked if entry[1] > 0][:NARA_RELAXED_METADATA_HINTS]
+        ranked = [*coherent_relaxed_ranked, *nara_ranked_hints]
+        return [item for _, _, _, item in ranked], True
+
+    relaxed_ranked.sort(key=lambda entry: (-entry[0], -entry[1], entry[2]))
+    return [item for _, _, _, item in relaxed_ranked], bool(relaxed_ranked)
+
+
+def extract_nara_item_score(item: Any) -> float:
+    raw = getattr(item, "raw", None)
+    if isinstance(raw, dict):
+        score = raw.get("_score")
+        if isinstance(score, (int, float)):
+            return float(score)
+        source = raw.get("_source")
+        if isinstance(source, dict):
+            nested_score = source.get("_score")
+            if isinstance(nested_score, (int, float)):
+                return float(nested_score)
+    return 0.0
 
 
 def store_nara_candidate(
@@ -631,8 +1069,10 @@ def store_nara_candidate(
     page = get_best_page_for_candidate_pages(pages)
     score, category, evidences = score_record(payload, record)
     if page is not None:
+        page_score, page_evidences = score_relevant_page_alignment(payload, page)
+        score += page_score
+        evidences.extend(page_evidences)
         score = min(score + 8, 100)
-        category = category_for_score(score)
         evidences.append(
             (
                 "positive",
@@ -655,6 +1095,9 @@ def store_nara_candidate(
                     page_text[1],
                 )
             )
+            score = min(score + 6, 100)
+    score = max(0, min(score, 100))
+    category = category_for_score(score)
     result = SearchResult(
         job_id=job.id,
         candidate_record_id=candidate.id,
@@ -865,15 +1308,22 @@ def score_record(payload: SearchRequest, record: NaraRecord) -> tuple[float, str
     evidences: list[tuple[str, str, str | None, float, str | None]] = []
     score = 0.0
 
-    if payload.last_name and normalize_text(payload.last_name) in haystack:
-        score += 24
-        evidences.append(("positive", "Nachname im NARA-Datensatz gefunden", record.title, 24, "NARA-Metadaten"))
+    name_score, name_evidences = score_name_coherence(payload, record, haystack)
+    score += name_score
+    evidences.extend(name_evidences)
     if payload.first_name and normalize_text(payload.first_name) in haystack:
         score += 16
         evidences.append(("positive", "Vorname im NARA-Datensatz gefunden", record.title, 16, "NARA-Metadaten"))
-    if payload.birth_year and str(payload.birth_year) in haystack:
-        score += 12
-        evidences.append(("positive", "Geburtsjahr im NARA-Datensatz gefunden", None, 12, "NARA-Metadaten"))
+    birth_status, birth_year = birth_year_match_details(payload, haystack)
+    if birth_status == "contextual":
+        score += 18
+        evidences.append(("positive", "Geburtsjahr mit Geburtskontext im Datensatz gefunden", birth_year, 18, "NARA-Metadaten/Text"))
+    elif birth_status == "generic":
+        score += 6
+        evidences.append(("positive", "Jahr aus dem Suchprofil im Datensatz gefunden", birth_year, 6, "NARA-Metadaten/Text"))
+    elif birth_status == "conflict":
+        score -= 24
+        evidences.append(("negative", "Abweichendes Geburtsjahr mit Geburtskontext gefunden", birth_year, -24, "NARA-Metadaten/Text"))
     if payload.membership_number:
         digits = re.sub(r"\D+", "", payload.membership_number)
         haystack_digits = re.sub(r"\D+", "", haystack)
@@ -886,6 +1336,12 @@ def score_record(payload: SearchRequest, record: NaraRecord) -> tuple[float, str
                 score += 8
                 evidences.append(("positive", f"Wohnort gefunden: {place}", None, 8, "NARA-Metadaten/Text"))
                 break
+    selected_categories = selected_source_category_ids(payload)
+    if selected_categories:
+        source_category_id, source_category_label = classify_record_source_category(record, selected_categories)
+        if source_category_id != OTHER_SOURCE_CATEGORY_ID:
+            score += 6
+            evidences.append(("positive", f"Quellenart passt: {source_category_label}", None, 6, "NARA-Metadaten"))
     if record.digitalObjects:
         score += 5
         evidences.append(("positive", "Datensatz enthält digitale Objekte", None, 5, "NARA-Metadaten"))
@@ -894,8 +1350,203 @@ def score_record(payload: SearchRequest, record: NaraRecord) -> tuple[float, str
         score = 10
         evidences.append(("uncertainty", "Kandidat wurde von NARA zur Suchanfrage geliefert, aber lokale Evidenz ist schwach", None, 0, "NARA-Suche"))
 
-    score = min(score, 100)
+    score = max(0, min(score, 100))
     return score, category_for_score(score), evidences
+
+
+def score_relevant_page_alignment(
+    payload: SearchRequest, page: CandidatePage
+) -> tuple[float, list[tuple[str, str, str | None, float, str | None]]]:
+    transcript_text, transcript_source, _ = current_page_text(page)
+    digital_object = page.digital_object
+    page_sources = [
+        transcript_text,
+        page.image_url,
+        page.original_url,
+        digital_object.object_id if digital_object else None,
+        digital_object.object_type if digital_object else None,
+        digital_object.url if digital_object else None,
+        digital_object.file_name if digital_object else None,
+    ]
+    haystack = normalize_text(" ".join(value for value in page_sources if value))
+    if not haystack:
+        return 0.0, []
+
+    score = 0.0
+    matched_buckets: set[str] = set()
+    evidences: list[tuple[str, str, str | None, float, str | None]] = []
+    source_type = transcript_source or "NARA-Digitalobjekt"
+
+    name_matched, name_label = name_match_details(payload, haystack)
+    if name_matched:
+        delta = 16.0 if name_label == "voller Name" else 10.0
+        score += delta
+        matched_buckets.add("name")
+        evidences.append(("positive", "Name auf relevanter Originalseite gefunden", name_label, delta, source_type))
+        if name_label != "voller Name" and payload.first_name and normalize_text(payload.first_name) in haystack:
+            score += 5.0
+            evidences.append(("positive", "Vorname und Nachname stehen auf derselben Originalseite", None, 5.0, source_type))
+
+    if exact_identifier_match(payload, haystack):
+        score += 20.0
+        matched_buckets.add("identifier")
+        evidences.append(("positive", "Mitgliedsnummer auf relevanter Originalseite gefunden", None, 20.0, source_type))
+
+    birth_status, birth_year = birth_year_match_details(payload, haystack)
+    if birth_status == "contextual":
+        score += 10.0
+        matched_buckets.add("life")
+        evidences.append(("positive", "Geburtsjahr auf relevanter Originalseite gefunden", birth_year, 10.0, source_type))
+    elif birth_status == "generic":
+        score += 4.0
+        matched_buckets.add("life")
+        evidences.append(("positive", "Jahr aus dem Suchprofil auf relevanter Originalseite gefunden", birth_year, 4.0, source_type))
+    elif birth_status == "conflict":
+        score -= 16.0
+        evidences.append(("negative", "Abweichendes Geburtsjahr auf relevanter Originalseite gefunden", birth_year, -16.0, source_type))
+
+    places = matched_place_names(payload, haystack)
+    if places:
+        delta = min(12.0, 6.0 + max(0, len(places) - 1) * 3.0)
+        score += delta
+        matched_buckets.add("place")
+        evidences.append(("positive", "Ortsangabe auf relevanter Originalseite gefunden", ", ".join(places), delta, source_type))
+
+    if len(matched_buckets) >= 3:
+        score += 10.0
+        evidences.append(
+            (
+                "positive",
+                "Mehrere unabhängige Suchmerkmale stehen auf derselben Originalseite",
+                ", ".join(sorted(matched_buckets)),
+                10.0,
+                source_type,
+            )
+        )
+    elif len(matched_buckets) == 2:
+        score += 5.0
+        evidences.append(
+            (
+                "positive",
+                "Zwei unabhängige Suchmerkmale stehen auf derselben Originalseite",
+                ", ".join(sorted(matched_buckets)),
+                5.0,
+                source_type,
+            )
+        )
+
+    if transcript_text and not matched_buckets:
+        score -= 24.0
+        evidences.append(
+            (
+                "uncertainty",
+                "Transkript der relevanten Originalseite enthält keine Suchmerkmale",
+                None,
+                -24.0,
+                source_type,
+            )
+        )
+
+    return score, evidences
+
+
+def is_record_name_coherent(payload: SearchRequest, record: NaraRecord) -> bool:
+    if payload.naid and str(record.naId or "").strip() == payload.naid.strip():
+        return True
+    haystack = normalize_text(" ".join(extract_record_text_parts(record)))
+    if exact_identifier_match(payload, haystack):
+        return True
+    return name_match_details(payload, haystack)[0]
+
+
+def score_name_coherence(
+    payload: SearchRequest, record: NaraRecord, haystack: str
+) -> tuple[float, list[tuple[str, str, str | None, float, str | None]]]:
+    matched, label = name_match_details(payload, haystack)
+    if not matched:
+        return 0.0, []
+    if label == "voller Name":
+        return 34.0, [("positive", "Name oder Namensvariante im NARA-Datensatz gefunden", record.title, 34, "NARA-Metadaten/Text")]
+    return 24.0, [("positive", f"Nachname oder plausible Schreibvariante gefunden: {label}", record.title, 24, "NARA-Metadaten/Text")]
+
+
+def name_match_details(payload: SearchRequest, haystack: str) -> tuple[bool, str]:
+    for variant in build_full_person_name_variants(payload):
+        normalized = normalize_text(variant)
+        if normalized and normalized in haystack and len(normalized) >= 5:
+            return True, "voller Name"
+    for variant in build_full_surname_variants(payload.last_name):
+        normalized = normalize_text(variant)
+        if normalized and len(normalized) >= 4 and normalized in haystack:
+            return True, variant
+    surname_parts = significant_surname_parts(payload.last_name)
+    if len(surname_parts) > 1:
+        if all(normalize_text(part) in haystack for part in surname_parts):
+            return True, "mehrteiliger Nachname"
+        return False, ""
+    for variant in build_primary_surname_variants(payload.last_name):
+        normalized = normalize_text(variant)
+        if normalized and len(normalized) >= 4 and normalized in haystack:
+            return True, variant
+    return False, ""
+
+
+def significant_surname_parts(last_name: str | None) -> list[str]:
+    if not last_name:
+        return []
+    return [part for part in re.split(r"[\s-]+", last_name.strip()) if len(normalize_text(part)) >= 4]
+
+
+def build_primary_surname_variants(last_name: str | None) -> list[str]:
+    if not last_name:
+        return []
+    raw_tokens = [token for token in re.split(r"[\s-]+", last_name.strip()) if token]
+    primary_tokens = raw_tokens[:1] if len(raw_tokens) > 1 else raw_tokens
+    variants = primary_tokens + [build_schultze_schulze_variants(token) for token in primary_tokens]
+    return dedupe_query_terms(variants)
+
+
+def exact_identifier_match(payload: SearchRequest, haystack: str) -> bool:
+    if not payload.membership_number:
+        return False
+    needle = re.sub(r"\D+", "", payload.membership_number)
+    haystack_digits = re.sub(r"\D+", "", haystack)
+    return bool(needle and len(needle) >= 4 and needle in haystack_digits)
+
+
+def birth_year_match_details(payload: SearchRequest, haystack: str) -> tuple[str, str | None]:
+    if not payload.birth_year:
+        return "none", None
+    requested_year = str(payload.birth_year)
+    contextual_years = contextual_birth_years(haystack)
+    if requested_year in contextual_years:
+        return "contextual", requested_year
+    if contextual_years:
+        return "conflict", ", ".join(contextual_years[:3])
+    if requested_year in haystack:
+        return "generic", requested_year
+    return "none", None
+
+
+def contextual_birth_years(haystack: str) -> list[str]:
+    year_pattern = r"(17\d{2}|18\d{2}|19\d{2}|20\d{2})"
+    context_pattern = r"(?:born|birth|geboren|geburts(?:datum|jahr)?|geb)"
+    matches: list[str] = []
+    for pattern in (
+        rf"\b{context_pattern}\b\D{{0,40}}\b{year_pattern}\b",
+        rf"\b{year_pattern}\b\D{{0,40}}\b{context_pattern}\b",
+    ):
+        for match in re.finditer(pattern, haystack):
+            years = [group for group in match.groups() if group and re.fullmatch(year_pattern, group)]
+            matches.extend(years)
+    return dedupe_query_terms(matches)
+
+
+def matched_place_names(payload: SearchRequest, haystack: str) -> list[str]:
+    if not payload.residence_places:
+        return []
+    places = [line.strip() for line in re.split(r"[\n,;]+", payload.residence_places) if line.strip()]
+    return [place for place in dedupe_query_terms(places) if normalize_text(place) in haystack]
 
 
 def extract_record_text_parts(record: NaraRecord) -> list[str]:
@@ -1290,11 +1941,14 @@ def serialize_result(result: SearchResult) -> SearchResultResponse:
     page = get_relevant_page(result)
     transcript_text, transcript_source, transcript_edited = current_page_text(page) if page else (None, None, False)
     media_pages = build_result_media_pages(result)
+    source_category, source_category_label = classify_record_source_category(record)
     return SearchResultResponse(
         id=result.id,
         job_id=result.job_id,
         match_score=result.match_score,
         category=result.category,
+        source_category=source_category,
+        source_category_label=source_category_label,
         suspected_person_name=result.suspected_person_name,
         birth_date=result.birth_date,
         birth_place=result.birth_place,
@@ -1328,6 +1982,18 @@ def serialize_result(result: SearchResult) -> SearchResultResponse:
     )
 
 
+def sort_search_result_responses(results: list[SearchResultResponse]) -> list[SearchResultResponse]:
+    return sorted(
+        results,
+        key=lambda result: (
+            -result.match_score,
+            min(result.record_years) if result.record_years else 9999,
+            result.source_category_label or "",
+            result.naid,
+        ),
+    )
+
+
 def get_relevant_page(result: SearchResult) -> CandidatePage | None:
     pages = get_result_pages(result)
     if not pages:
@@ -1346,13 +2012,110 @@ def get_result_pages(result: SearchResult) -> list[CandidatePage]:
     return pages
 
 
+def build_result_match_terms(result: SearchResult) -> list[str]:
+    profile = result.job.profile if result.job else None
+    if not profile:
+        return []
+    values: list[str] = []
+    for field in profile.fields:
+        if field.field_name not in {
+            "first_name",
+            "last_name",
+            "variants",
+            "birth_date",
+            "birth_year",
+            "residence_places",
+            "membership_number",
+        }:
+            continue
+        values.extend(split_search_field_value(field.original_value))
+        values.extend(variant.value for variant in field.variants)
+        if field.field_name == "last_name":
+            values.extend(build_full_surname_variants(field.original_value))
+            values.extend(build_primary_surname_variants(field.original_value))
+        if field.field_name == "membership_number":
+            digits = re.sub(r"\D+", "", field.original_value)
+            if digits:
+                values.append(digits)
+    terms = [term for term in dedupe_query_terms(values) if len(normalize_text(term)) >= 3]
+    terms.sort(key=lambda term: (0 if re.search(r"\d", term) else 1, -len(term), term.casefold()))
+    return terms[:24]
+
+
+def split_search_field_value(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [part.strip() for part in re.split(r"[\n,;]+", value) if part.strip()]
+
+
+def build_page_match_terms(
+    record: CandidateRecord, page: CandidatePage, search_terms: list[str], transcript_text: str | None
+) -> list[str]:
+    digital_object = page.digital_object
+    page_sources = [
+        transcript_text,
+        page.image_url,
+        page.original_url,
+        digital_object.file_name if digital_object else None,
+        digital_object.object_id if digital_object else None,
+        digital_object.object_type if digital_object else None,
+        record.title,
+        record.description,
+    ]
+    haystack = normalize_text(" ".join(value for value in page_sources if value))
+    haystack_digits = re.sub(r"\D+", "", haystack)
+    matches: list[str] = []
+    for term in search_terms:
+        normalized = normalize_text(term)
+        if not normalized:
+            continue
+        digits = re.sub(r"\D+", "", term)
+        if digits and len(digits) >= 4 and digits in haystack_digits:
+            matches.append(term)
+        elif len(normalized) >= 3 and normalized in haystack:
+            matches.append(term)
+    return dedupe_query_terms(matches)[:8]
+
+
+def build_page_match_snippets(page: CandidatePage, transcript_text: str | None, match_terms: list[str]) -> list[str]:
+    text = transcript_text or ""
+    snippets: list[str] = []
+    for term in match_terms:
+        snippet = snippet_for_term(text, term)
+        if snippet:
+            snippets.append(snippet)
+        elif page.digital_object and page.digital_object.file_name:
+            snippets.append(f"{term} in {page.digital_object.file_name}")
+        elif page.original_url or page.image_url:
+            snippets.append(f"{term} in den Seitenmetadaten")
+        if len(snippets) >= 5:
+            break
+    return dedupe_query_terms(snippets)
+
+
+def snippet_for_term(text: str, term: str) -> str | None:
+    if not text.strip():
+        return None
+    match = re.search(re.escape(term), text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    start = max(0, match.start() - 80)
+    end = min(len(text), match.end() + 100)
+    prefix = "..." if start > 0 else ""
+    suffix = "..." if end < len(text) else ""
+    cleaned = re.sub(r"\s+", " ", text[start:end]).strip()
+    return f"{prefix}{cleaned}{suffix}"
+
+
 def build_result_media_pages(result: SearchResult) -> list[ResultMediaPageResponse]:
     record = result.candidate_record
-    return [build_result_media_page(record, page) for page in get_result_pages(result)]
+    match_terms = build_result_match_terms(result)
+    return [build_result_media_page(record, page, match_terms) for page in get_result_pages(result)]
 
 
-def build_result_media_page(record: CandidateRecord, page: CandidatePage) -> ResultMediaPageResponse:
+def build_result_media_page(record: CandidateRecord, page: CandidatePage, search_terms: list[str]) -> ResultMediaPageResponse:
     transcript_text, transcript_source, transcript_edited = current_page_text(page)
+    match_terms = build_page_match_terms(record, page, search_terms, transcript_text)
     return ResultMediaPageResponse(
         page_id=page.id,
         page_number=page.page_number,
@@ -1365,6 +2128,8 @@ def build_result_media_page(record: CandidateRecord, page: CandidatePage) -> Res
         transcript_text=transcript_text,
         transcript_source=transcript_source,
         transcript_edited=transcript_edited,
+        match_terms=match_terms,
+        match_snippets=build_page_match_snippets(page, transcript_text, match_terms),
     )
 
 

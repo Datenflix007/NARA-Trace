@@ -27,7 +27,7 @@ from naratrace.core.secrets import (
     get_nara_api_key_status,
     set_nara_api_key,
 )
-from naratrace.export.research_report import build_search_report_markdown
+from naratrace.export.research_report import build_search_report_markdown, build_search_report_pdf, build_search_report_zip
 from naratrace.nara.client import NaraCatalogClient, NaraClientError
 from naratrace.nara.usage import NaraApiUsage, get_nara_api_usage
 from naratrace.processing.local_documents import analyze_local_document_upload, get_local_document_image_path
@@ -144,6 +144,28 @@ async def export_search_report(job_id: str) -> Response:
     )
 
 
+@api_router.get("/search/{job_id}/export.pdf")
+async def export_search_report_pdf(job_id: str) -> Response:
+    report = build_search_report_pdf(job_id)
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suchjob wurde nicht gefunden.")
+    filename, content = report
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@api_router.get("/search/{job_id}/export.zip")
+async def export_search_report_zip(job_id: str) -> FileResponse:
+    report = build_search_report_zip(job_id)
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suchjob wurde nicht gefunden.")
+    filename, archive_path = report
+    return FileResponse(archive_path, media_type="application/zip", filename=filename)
+
+
 @api_router.delete("/search/{job_id}/results/{result_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_search_result(job_id: str, result_id: int) -> Response:
     if not delete_search_result(job_id, result_id):
@@ -174,6 +196,19 @@ async def update_result_transcript(job_id: str, result_id: int, payload: Transcr
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Treffer wurde nicht gefunden.")
     return result
+
+
+@api_router.get("/search/{job_id}/results/{result_id}/export.pdf")
+async def export_search_result_pdf(job_id: str, result_id: int) -> Response:
+    report = build_search_report_pdf(job_id, result_id=result_id)
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Treffer wurde nicht gefunden.")
+    filename, content = report
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @api_router.get("/pages/{page_id}/image")
