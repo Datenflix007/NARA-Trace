@@ -1062,4 +1062,75 @@ describe('App', () => {
     expect((screen.getByLabelText('Transkription') as HTMLTextAreaElement).value).toBe('Korrigierte Transkription');
     expect(screen.getByText('manuell korrigiert')).toBeTruthy();
   });
+
+  it('marks OCR hits from a search history synchronously on the original image', async () => {
+    const result = localResult({
+      id: 12,
+      job_id: 'job-1',
+      data_source: 'NARA',
+      naid: 'A3340-MFKL-R0013-02947',
+      title: 'A3340 MFKL R0013 - card frame 2947',
+      source_page_id: 42,
+      source_page_url: '/api/pages/42/image',
+      source_page_label: 'A3340 MFKL R0013 - card frame 2947',
+      transcript_text: 'Paul Schultze-Naumburg membership number 347 541',
+      transcript_source: 'local OCR',
+      media_pages: [
+        {
+          page_id: 42,
+          page_number: 1,
+          label: 'A3340 MFKL R0013 - card frame 2947',
+          media_url: '/api/pages/42/media',
+          media_type: 'image',
+          original_url: null,
+          thumbnail_url: '/api/pages/42/media',
+          mime_type: 'image/jpeg',
+          transcript_text: 'Paul Schultze-Naumburg membership number 347 541',
+          transcript_source: 'local OCR',
+          transcript_edited: false
+        }
+      ],
+      highlight_terms: ['Paul', '347541']
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/api/settings') {
+        return new Response(JSON.stringify(settingsResponse()), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url === '/api/search') {
+        return new Response(JSON.stringify([searchJob({ result_count: 1 })]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url === '/api/search/job-1/results') {
+        return new Response(JSON.stringify([result]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url.startsWith('/api/pages/42/highlights?')) {
+        return {
+          ok: true,
+          json: async () => [
+            { term: 'Paul', occurrence: 1, x: 25, y: 31, width: 8, height: 3 },
+            { term: '347541', occurrence: 1, x: 32, y: 38, width: 11, height: 3 }
+          ]
+        } as Response;
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    render(App);
+
+    await fireEvent.click(screen.getByRole('link', { name: /Suchverl/ }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /abgeschlossen .* 1 Treffer/ })).toBeTruthy());
+    await fireEvent.click(screen.getByRole('button', { name: /abgeschlossen .* 1 Treffer/ }));
+    await waitFor(() => expect(screen.getByText('A3340 MFKL R0013 - card frame 2947')).toBeTruthy());
+    await fireEvent.click(screen.getByRole('button', { name: /A3340 MFKL R0013/ }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/pages/42/highlights?terms=Paul&terms=347541'));
+    await waitFor(() => expect(screen.getByText('Treffer auf der Originalseite')).toBeTruthy());
+    const imageHitControl = screen.getByRole('button', { name: /Treffer im Bild Paul/ });
+    const imageHotspot = screen.getByRole('button', { name: 'Treffer Paul' });
+    await fireEvent.mouseEnter(imageHitControl);
+
+    expect(imageHotspot.classList.contains('active')).toBe(true);
+    expect(imageHotspot.getAttribute('style')).toContain('left: 25%');
+    expect(fetchMock).toHaveBeenCalledWith('/api/pages/42/highlights?terms=Paul&terms=347541');
+  });
 });

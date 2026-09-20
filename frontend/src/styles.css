@@ -1127,6 +1127,31 @@ textarea {
   outline: none;
 }
 
+.image-hit-hotspot {
+  min-width: 8px;
+  min-height: 8px;
+}
+
+.image-hit-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  border-top: 1px solid #d9e0de;
+  padding-top: 14px;
+}
+
+.image-hit-list > p,
+.image-hit-status {
+  margin: 0;
+  color: #5f6868;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.image-hit-line {
+  border-color: #d8c46a;
+}
+
 .identity-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

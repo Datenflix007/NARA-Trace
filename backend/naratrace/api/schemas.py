@@ -103,6 +103,17 @@ class MatchEvidenceResponse(BaseModel):
     source_type: str | None
 
 
+class PageHitRegionResponse(BaseModel):
+    """A word or word sequence located by OCR in a locally cached image."""
+
+    term: str
+    occurrence: int
+    x: float = Field(ge=0, le=100)
+    y: float = Field(ge=0, le=100)
+    width: float = Field(gt=0, le=100)
+    height: float = Field(gt=0, le=100)
+
+
 class ResultMediaPageResponse(BaseModel):
     page_id: int
     page_number: int

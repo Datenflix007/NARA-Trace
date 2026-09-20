@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import mimetypes
 
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse
 
 from naratrace import __version__
@@ -12,6 +12,7 @@ from naratrace.api.schemas import (
     HealthResponse,
     LocalDocumentResponse,
     NaraApiUsageResponse,
+    PageHitRegionResponse,
     SearchJobResponse,
     SearchRequest,
     SearchResultResponse,
@@ -37,6 +38,7 @@ from naratrace.processing.jobs import (
     delete_search_job,
     delete_search_result,
     get_candidate_page_image_path,
+    get_candidate_page_hit_regions,
     get_candidate_page_media_path,
     get_search_job,
     get_search_results,
@@ -182,6 +184,11 @@ async def read_page_image(page_id: int) -> FileResponse:
     if image_path is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Originalseite wurde nicht gefunden.")
     return FileResponse(image_path, media_type=mimetypes.guess_type(image_path.name)[0])
+
+
+@api_router.get("/pages/{page_id}/highlights", response_model=list[PageHitRegionResponse])
+async def read_page_highlights(page_id: int, terms: list[str] = Query(default=[])) -> list[PageHitRegionResponse]:
+    return [PageHitRegionResponse(**region.__dict__) for region in get_candidate_page_hit_regions(page_id, terms)]
 
 
 @api_router.get("/pages/{page_id}/media")

@@ -14,6 +14,7 @@
 
   async function synchronizeViewer() {
     if (!viewer) return;
+    const targetViewer = viewer;
 
     const document = createTranscriptAnnotationDocument({
       id: documentId,
@@ -23,10 +24,11 @@
       terms
     });
 
-    await viewer.loadText(text, document.document);
-    viewer.setMode('annotations');
-    viewer.setAnnotationDisplayStyle('bracket');
-    viewer.setAnnotationDocument(document);
+    await targetViewer.loadText(text, document.document);
+    if (viewer !== targetViewer) return;
+    targetViewer.setMode('annotations');
+    targetViewer.setAnnotationDisplayStyle('bracket');
+    targetViewer.setAnnotationDocument(document);
   }
 
   onMount(async () => {

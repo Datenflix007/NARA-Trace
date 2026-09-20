@@ -7,6 +7,7 @@
     deleteNaraApiKey,
     downloadSearchReport,
     fetchHealth,
+    fetchPageHitRegions,
     fetchSearchHistory,
     fetchSearchJob,
     fetchSearchResults,
@@ -20,6 +21,7 @@
     type HealthResponse,
     type LocalDocumentResponse,
     type NaraApiUsageResponse,
+    type PageHitRegionResponse,
     type ResultMediaPageResponse,
     type SearchJobResponse,
     type SearchResultResponse,
@@ -85,6 +87,8 @@
     transcriptSource: string | null;
     transcriptEdited: boolean;
   };
+
+  type ImageHitRegion = PageHitRegionResponse;
 
   type DecadeBucket = {
     decade: number;
@@ -289,6 +293,8 @@
   let detailOrigin: DetailOrigin = 'start';
   let hoveredLineId = '';
   let pinnedLineId = '';
+  let imageHitRegions: Record<string, ImageHitRegion[]> = {};
+  let imageHitRequests: Record<string, boolean> = {};
   let transcriptDraft = '';
   let transcriptDrafts: Record<string, string> = {};
   let transcriptSaving = false;
@@ -931,6 +937,7 @@
     const maxIndex = result.mediaPages.length - 1;
     selectedMediaIndexes = { ...selectedMediaIndexes, [result.key]: Math.min(Math.max(index, 0), maxIndex) };
     resetMediaTransform(result);
+    void loadCurrentImageHitRegions(result);
   }
 
   function previousMediaPage(result: DisplayResult) {
@@ -1042,6 +1049,80 @@
 
   function hotspotStyle(line: TranscriptLine) {
     return `left: ${line.box.x}%; top: ${line.box.y}%; width: ${line.box.width}%; height: ${line.box.height}%;`;
+  }
+
+  function imageHitStyle(region: ImageHitRegion) {
+    return `left: ${region.x}%; top: ${region.y}%; width: ${region.width}%; height: ${region.height}%;`;
+  }
+
+  function imageHitKey(result: DisplayResult, page: DisplayMediaPage) {
+    return `${result.key}:${page.pageId ?? 'no-page'}`;
+  }
+
+  function imageHitLineId(page: DisplayMediaPage, term: string) {
+    return `image-hit:${page.pageId ?? 'no-page'}:${term.toLocaleLowerCase('de-DE')}`;
+  }
+
+  function imageHitRegionsFor(
+    result: DisplayResult,
+    page: DisplayMediaPage | null,
+    regions: Record<string, ImageHitRegion[]> = imageHitRegions
+  ) {
+    if (!page) return [];
+    return regions[imageHitKey(result, page)] ?? [];
+  }
+
+  function imageHitTermsFor(
+    result: DisplayResult,
+    page: DisplayMediaPage | null,
+    regions: Record<string, ImageHitRegion[]> = imageHitRegions
+  ) {
+    const seen = new Set<string>();
+    return imageHitRegionsFor(result, page, regions).filter((region) => {
+      const key = region.term.toLocaleLowerCase('de-DE');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function imageHitCountForTerm(
+    result: DisplayResult,
+    page: DisplayMediaPage,
+    term: string,
+    regions: Record<string, ImageHitRegion[]> = imageHitRegions
+  ) {
+    return imageHitRegionsFor(result, page, regions).filter((region) => region.term === term).length;
+  }
+
+  function isImageHitLoading(
+    result: DisplayResult,
+    page: DisplayMediaPage | null,
+    requests: Record<string, boolean> = imageHitRequests
+  ) {
+    return page ? Boolean(requests[imageHitKey(result, page)]) : false;
+  }
+
+  async function loadCurrentImageHitRegions(result: DisplayResult) {
+    const page = currentMediaPage(result);
+    if (!page || page.mediaType !== 'image' || page.pageId === null || result.lines.length > 0) {
+      return;
+    }
+    const terms = (result.highlightTerms ?? []).map((term) => term.trim()).filter((term) => term.length >= 2);
+    if (terms.length === 0) return;
+
+    const key = imageHitKey(result, page);
+    if (key in imageHitRegions || imageHitRequests[key]) return;
+    imageHitRequests = { ...imageHitRequests, [key]: true };
+    try {
+      const regions = await fetchPageHitRegions(page.pageId, terms);
+      imageHitRegions = { ...imageHitRegions, [key]: regions };
+    } catch {
+      // A remote-only page or unavailable OCR should stay usable without a marker.
+      imageHitRegions = { ...imageHitRegions, [key]: [] };
+    } finally {
+      imageHitRequests = { ...imageHitRequests, [key]: false };
+    }
   }
 
   function transcriptRowsFor(result: DisplayResult): TranscriptLine[] {
@@ -1162,6 +1243,7 @@
     transcriptError = '';
     activeRoute = 'result-detail';
     window.location.hash = 'result-detail';
+    void loadCurrentImageHitRegions(result);
   }
 
   function openResultDetailWithKeyboard(event: KeyboardEvent, result: DisplayResult, origin: DetailOrigin) {
@@ -1929,6 +2011,22 @@
                                 onclick={() => togglePinnedLine(line.id)}
                               ></button>
                             {/each}
+                            {#each imageHitRegionsFor(result, mediaPage, imageHitRegions) as region}
+                              <button
+                                class="document-hotspot image-hit-hotspot"
+                                class:active={focusedLineId === imageHitLineId(mediaPage, region.term)}
+                                style={imageHitStyle(region)}
+                                type="button"
+                                aria-label={`Treffer ${region.term}`}
+                                title={`Treffer: ${region.term}`}
+                                onpointerdown={(event) => event.stopPropagation()}
+                                onmouseenter={() => setHoveredLine(imageHitLineId(mediaPage, region.term))}
+                                onmouseleave={clearHoveredLine}
+                                onfocus={() => setHoveredLine(imageHitLineId(mediaPage, region.term))}
+                                onblur={clearHoveredLine}
+                                onclick={() => togglePinnedLine(imageHitLineId(mediaPage, region.term))}
+                              ></button>
+                            {/each}
                           </div>
                         </div>
                     {:else if mediaPage?.mediaUrl && mediaPage.mediaType === 'video'}
@@ -2345,6 +2443,22 @@
                       onclick={() => togglePinnedLine(line.id)}
                     ></button>
                   {/each}
+                  {#each imageHitRegionsFor(detailResult, mediaPage, imageHitRegions) as region}
+                    <button
+                      class="document-hotspot image-hit-hotspot"
+                      class:active={focusedLineId === imageHitLineId(mediaPage, region.term)}
+                      style={imageHitStyle(region)}
+                      type="button"
+                      aria-label={`Treffer ${region.term}`}
+                      title={`Treffer: ${region.term}`}
+                      onpointerdown={(event) => event.stopPropagation()}
+                      onmouseenter={() => setHoveredLine(imageHitLineId(mediaPage, region.term))}
+                      onmouseleave={clearHoveredLine}
+                      onfocus={() => setHoveredLine(imageHitLineId(mediaPage, region.term))}
+                      onblur={clearHoveredLine}
+                      onclick={() => togglePinnedLine(imageHitLineId(mediaPage, region.term))}
+                    ></button>
+                  {/each}
                 </div>
               </div>
             {:else if mediaPage?.mediaUrl && mediaPage.mediaType === 'video'}
@@ -2413,6 +2527,38 @@
                 </button>
               {/each}
             </div>
+          {/if}
+
+          {#if detailResult}
+            {@const selectedImagePage = currentMediaPage(detailResult)}
+            {#if isImageHitLoading(detailResult, selectedImagePage, imageHitRequests)}
+              <p class="image-hit-status">Prüfe OCR-Fundstellen auf der Originalseite …</p>
+            {:else if selectedImagePage && imageHitTermsFor(detailResult, selectedImagePage, imageHitRegions).length > 0}
+            <section class="image-hit-list" aria-label="Treffer auf der Originalseite">
+              <span class="eyebrow">Treffer auf der Originalseite</span>
+              <p>Die Markierungen stammen aus der lokalen OCR dieser Kartenansicht.</p>
+              <div class="transcript-lines">
+                {#each imageHitTermsFor(detailResult, selectedImagePage, imageHitRegions) as term}
+                  {@const hitLineId = imageHitLineId(selectedImagePage, term.term)}
+                  {@const hitCount = imageHitCountForTerm(detailResult, selectedImagePage, term.term, imageHitRegions)}
+                  <button
+                    class="transcript-line image-hit-line"
+                    class:active={focusedLineId === hitLineId}
+                    type="button"
+                    onmouseenter={() => setHoveredLine(hitLineId)}
+                    onmouseleave={clearHoveredLine}
+                    onfocus={() => setHoveredLine(hitLineId)}
+                    onblur={clearHoveredLine}
+                    onclick={() => togglePinnedLine(hitLineId)}
+                  >
+                    <span>Treffer im Bild</span>
+                    <strong>{term.term}</strong>
+                    <small>{hitCount} {hitCount === 1 ? 'Fundstelle' : 'Fundstellen'} in dieser Seite</small>
+                  </button>
+                {/each}
+              </div>
+            </section>
+            {/if}
           {/if}
 
           <div class="transcript-editor-panel">

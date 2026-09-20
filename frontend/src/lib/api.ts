@@ -76,6 +76,15 @@ export type ResultMediaPageResponse = {
   transcript_edited: boolean;
 };
 
+export type PageHitRegionResponse = {
+  term: string;
+  occurrence: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 export type SearchResultResponse = {
   id: number;
   job_id: string;
@@ -223,6 +232,19 @@ export async function fetchSearchHistory(): Promise<SearchJobResponse[]> {
     throw new Error('Die Suchverläufe konnten nicht geladen werden.');
   }
   return response.json() as Promise<SearchJobResponse[]>;
+}
+
+export async function fetchPageHitRegions(pageId: number, terms: string[]): Promise<PageHitRegionResponse[]> {
+  const query = new URLSearchParams();
+  for (const term of terms) {
+    if (term.trim()) query.append('terms', term.trim());
+  }
+  if ([...query.keys()].length === 0) return [];
+  const response = await fetch(`/api/pages/${pageId}/highlights?${query.toString()}`);
+  if (!response.ok) {
+    throw new Error('Die OCR-Positionen auf der Originalseite konnten nicht geladen werden.');
+  }
+  return response.json() as Promise<PageHitRegionResponse[]>;
 }
 
 export async function deleteSearchJob(jobId: string): Promise<void> {

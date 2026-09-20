@@ -37,7 +37,9 @@ from naratrace.database.session import session_scope
 from naratrace.nara.client import NaraCatalogClient, NaraClientError, NaraRecord, NaraSearchResponse
 from naratrace.processing.documents import (
     MaterializedPage,
+    OcrHitRegion,
     ensure_display_image,
+    extract_ocr_hit_regions,
     is_browser_display_url,
     is_browser_video_file,
     is_browser_video_url,
@@ -361,6 +363,13 @@ def get_candidate_page_image_path(page_id: int) -> Path | None:
     if media_path is None or is_browser_video_file(media_path):
         return None
     return media_path
+
+
+def get_candidate_page_hit_regions(page_id: int, terms: list[str]) -> list[OcrHitRegion]:
+    image_path = get_candidate_page_image_path(page_id)
+    if image_path is None:
+        return []
+    return extract_ocr_hit_regions(image_path, terms)
 
 
 def load_result_for_serialization(session: Session, job_id: str, result_id: int) -> SearchResult | None:

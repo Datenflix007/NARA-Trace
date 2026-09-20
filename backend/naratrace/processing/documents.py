@@ -40,6 +40,18 @@ class MaterializedPage:
     is_relevant: bool = True
 
 
+@dataclass(frozen=True)
+class OcrHitRegion:
+    """A normalized rectangle for a verified OCR hit on an image page."""
+
+    term: str
+    occurrence: int
+    x: float
+    y: float
+    width: float
+    height: float
+
+
 async def materialize_best_page(job_id: str, naid: str, record: NaraRecord, payload: SearchRequest) -> MaterializedPage | None:
     choice = choose_relevant_digital_object(record, payload)
     if choice is None:
@@ -315,6 +327,122 @@ def extract_local_ocr(path: Path) -> str | None:
         return None
     cleaned = text.strip()
     return cleaned or None
+
+
+def extract_ocr_hit_regions(path: Path, terms: list[str]) -> list[OcrHitRegion]:
+    """Locate searched terms in a local image without asserting a person match.
+
+    The response is intentionally generated from Tesseract word boxes on demand.
+    It is therefore available for cached archival images, but never invents a
+    position for remote-only media or for terms that OCR did not actually read.
+    """
+
+    requested_terms = _usable_highlight_terms(terms)
+    if not requested_terms or not is_image_file(path):
+        return []
+
+    try:
+        with Image.open(path) as image:
+            display = ImageOps.exif_transpose(image)
+            processed = ImageOps.autocontrast(ImageOps.grayscale(display))
+            image_width, image_height = processed.size
+            try:
+                data = pytesseract.image_to_data(
+                    processed,
+                    lang="deu+eng",
+                    output_type=pytesseract.Output.DICT,
+                    timeout=OCR_TIMEOUT_SECONDS,
+                )
+            except (RuntimeError, pytesseract.TesseractError):
+                data = pytesseract.image_to_data(
+                    processed,
+                    lang="eng",
+                    output_type=pytesseract.Output.DICT,
+                    timeout=OCR_TIMEOUT_SECONDS,
+                )
+    except (pytesseract.TesseractError, pytesseract.TesseractNotFoundError, RuntimeError, OSError, UnidentifiedImageError):
+        return []
+
+    if image_width <= 0 or image_height <= 0:
+        return []
+
+    words = _ocr_words_with_boxes(data)
+    regions: list[OcrHitRegion] = []
+    for term in requested_terms:
+        target = _normalize_highlight_text(term)
+        if not target:
+            continue
+        occurrence = 0
+        for start in range(len(words)):
+            joined = ""
+            for end in range(start, min(start + 4, len(words))):
+                joined += words[end]["normalized"]
+                if joined == target:
+                    selected = words[start : end + 1]
+                    left = min(word["left"] for word in selected)
+                    top = min(word["top"] for word in selected)
+                    right = max(word["left"] + word["width"] for word in selected)
+                    bottom = max(word["top"] + word["height"] for word in selected)
+                    occurrence += 1
+                    regions.append(
+                        OcrHitRegion(
+                            term=term,
+                            occurrence=occurrence,
+                            x=_percentage(left, image_width),
+                            y=_percentage(top, image_height),
+                            width=_percentage(right - left, image_width),
+                            height=_percentage(bottom - top, image_height),
+                        )
+                    )
+                    break
+                if not target.startswith(joined):
+                    break
+    return regions
+
+
+def _usable_highlight_terms(terms: list[str]) -> list[str]:
+    seen: set[str] = set()
+    usable: list[str] = []
+    for value in terms:
+        term = value.strip()[:96]
+        normalized = _normalize_highlight_text(term)
+        if len(normalized) < 2 or normalized in seen:
+            continue
+        seen.add(normalized)
+        usable.append(term)
+        if len(usable) == 12:
+            break
+    return usable
+
+
+def _ocr_words_with_boxes(data: dict[str, list[object]]) -> list[dict[str, int | str]]:
+    words: list[dict[str, int | str]] = []
+    texts = data.get("text", [])
+    for index, raw_text in enumerate(texts):
+        text = str(raw_text).strip()
+        normalized = _normalize_highlight_text(text)
+        if not normalized:
+            continue
+        try:
+            left = int(data["left"][index])
+            top = int(data["top"][index])
+            width = int(data["width"][index])
+            height = int(data["height"][index])
+        except (IndexError, KeyError, TypeError, ValueError):
+            continue
+        if width <= 0 or height <= 0:
+            continue
+        words.append({"normalized": normalized, "left": left, "top": top, "width": width, "height": height})
+    return words
+
+
+def _normalize_highlight_text(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value)
+    return "".join(character for character in decomposed if character.isalnum()).casefold()
+
+
+def _percentage(value: int, total: int) -> float:
+    return round((value / total) * 100, 3)
 
 
 def is_image_file(path: Path) -> bool:

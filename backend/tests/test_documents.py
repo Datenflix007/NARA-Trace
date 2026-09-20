@@ -12,7 +12,7 @@ from naratrace.database.init import init_database
 from naratrace.database.models import CandidatePage, CandidateRecord, DigitalObject, SearchJob
 from naratrace.database.session import dispose_database, session_scope
 from naratrace.main import create_app
-from naratrace.processing.documents import canonical_nara_media_url, ensure_display_image
+from naratrace.processing.documents import OcrHitRegion, canonical_nara_media_url, ensure_display_image, extract_ocr_hit_regions
 from naratrace.processing.jobs import build_source_page_url, get_candidate_page_image_path, get_candidate_page_media_path
 
 
@@ -45,6 +45,50 @@ def test_canonical_nara_media_url_uses_public_catalog_endpoint_for_legacy_s3():
     assert canonical_nara_media_url(legacy_url) == (
         "https://catalog.archives.gov/medialz/dc-metro/rg-242/A3340-MFKL-R0013-02947.tif"
     )
+
+
+def test_extract_ocr_hit_regions_uses_word_boxes_for_names_and_spaced_numbers(tmp_path, monkeypatch):
+    image_path = tmp_path / "karte.png"
+    Image.new("RGB", (200, 100), "white").save(image_path)
+    monkeypatch.setattr(
+        "naratrace.processing.documents.pytesseract.image_to_data",
+        lambda *args, **kwargs: {
+            "text": ["Paul", "Schultze-", "Naumburg", "347", "541"],
+            "left": [10, 40, 85, 20, 48],
+            "top": [20, 20, 20, 60, 60],
+            "width": [25, 40, 50, 20, 20],
+            "height": [12, 12, 12, 10, 10],
+        },
+    )
+
+    regions = extract_ocr_hit_regions(image_path, ["Paul Schultze-Naumburg", "347541", "nicht vorhanden"])
+
+    assert [(region.term, region.occurrence) for region in regions] == [
+        ("Paul Schultze-Naumburg", 1),
+        ("347541", 1),
+    ]
+    assert regions[0].x == 5.0
+    assert regions[0].y == 20.0
+    assert regions[0].width == 62.5
+    assert regions[1].x == 10.0
+    assert regions[1].width == 24.0
+
+
+@pytest.mark.asyncio
+async def test_page_highlights_endpoint_returns_only_ocr_located_regions(monkeypatch):
+    monkeypatch.setattr(
+        "naratrace.api.routes.get_candidate_page_hit_regions",
+        lambda page_id, terms: [OcrHitRegion(term=terms[0], occurrence=1, x=10, y=20, width=30, height=4)],
+    )
+    app = create_app()
+
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/api/pages/42/highlights?terms=Paul&terms=347541")
+
+    assert response.status_code == 200
+    assert response.json() == [{"term": "Paul", "occurrence": 1, "x": 10.0, "y": 20.0, "width": 30.0, "height": 4.0}]
 
 
 def test_candidate_page_image_path_converts_cached_tiff_for_existing_jobs(tmp_path, monkeypatch):
