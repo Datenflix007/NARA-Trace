@@ -21,7 +21,13 @@ Für den ersten vollständigen A3340-Durchlauf kann der lokale Textindex bewusst
 python -m naratrace --index-a3340
 ```
 
-Der Befehl ist fortsetzbar; nur noch nicht indexierte Rollen werden geladen. `--refresh-a3340-index` baut den Textindex bewusst neu auf.
+Oder unter Windows direkt:
+
+```powershell
+.\quickstart.bat index
+```
+
+Der Befehl ist fortsetzbar; nur noch nicht indexierte Rollen werden geladen. `--refresh-a3340-index` baut den Textindex bewusst neu auf. `.\quickstart.bat all` indiziert zuerst und startet anschließend die Anwendung.
 
 ## Suche anlegen
 

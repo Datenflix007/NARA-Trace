@@ -113,7 +113,19 @@ Windows-Schnellstart:
 .\quickstart.bat
 ```
 
-Das Batch-Skript baut das Frontend und startet NARATrace auf Port `8766`.
+Das Batch-Skript baut das Frontend und startet NARATrace auf Port `8766`. Für die vollständige A3340-Suche zuerst einmalig beziehungsweise nach einem Abbruch fortsetzbar ausführen:
+
+```powershell
+.\quickstart.bat index
+```
+
+Mit einem Befehl indizieren und starten:
+
+```powershell
+.\quickstart.bat all
+```
+
+Der Index enthält die Roll-JSON-Texte aller MFKL-/MFOK-Rollen, aber keine Massenkopie der Kartenbilder.
 
 ## API-Schlüssel
 
