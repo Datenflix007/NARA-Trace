@@ -24,7 +24,7 @@ flowchart TD
 
 ## Retrieval
 
-Die A3340-Pipeline verwendet getrennte, dokumentierte Pässe: vollständiger Name, normalisierte Namensform, Nachname plus Vorname, fuzzy Nachname, Nachname plus Geburtsjahr, Nachname plus Ort, Mitgliedsnummer und erst danach Catalog-Fallback. Ergebnisse behalten ihren Retrieval-Pass. MFKL-Retrieval ist bereits in den Suchjob eingebunden: Nur konkrete Frames werden als Treffer gespeichert und höchstens drei davon als einzelne Originalbilder geladen – nie ein komplettes Rollen-PDF.
+Die A3340-Pipeline verwendet getrennte, dokumentierte Pässe: vollständiger Name, normalisierte Namensform, Nachname plus Vorname, fuzzy Nachname, Nachname plus Geburtsjahr, Nachname plus Ort, Mitgliedsnummer und erst danach Catalog-Fallback. Ergebnisse behalten ihren Retrieval-Pass. Beim Erstaufbau werden alle MFKL- und MFOK-Roll-JSONs ohne Originalbilder lokal in SQLite FTS5 indexiert. Die Suche fragt danach den gesamten lokalen Korpus ab, nicht nur eine angenommene Rolle wie R0013. Nur konkrete Frames werden als Treffer gespeichert und höchstens drei davon als einzelne Originalbilder geladen – nie ein komplettes Rollen-PDF.
 
 Namensnormalisierung bewahrt stets den Originalwert. Bindestrich-, Leerzeichen-, Umlaut-, ß- und Adelsprädikatvarianten sind gewichtet; ein kurzer Namensstamm ist nie gleich stark wie ein vollständiger Doppelname. Fuzzy-Matching darf Kandidaten retten, nicht häufige Namen zu Beweisen machen.
 

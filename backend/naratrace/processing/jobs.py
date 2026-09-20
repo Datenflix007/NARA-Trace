@@ -120,7 +120,7 @@ async def execute_search_job(job_id: str, payload: SearchRequest) -> None:
             return
 
         api_key, key_source = get_nara_api_key()
-    if not update_job_state(job_id, "searching_a3340", 2):
+    if not update_job_state(job_id, "indexing_a3340_corpus", 2):
         return
     try:
         nsdap_candidates, nsdap_warnings = await retrieve_nsdap_candidates(payload)

@@ -62,7 +62,7 @@ FTS5 ist vorgesehen, sobald Roll-JSONs lokal dauerhaft indexiert werden. Bis dah
 ## Architekturentscheidungen
 
 1. **Open Dataset vor Catalog-only Retrieval:** Das Dataset liefert die Roll- und Frame-Ebene, auf der die Karte tatsächlich liegt; der Catalog liefert weiterhin die archivische Referenz.
-2. **Rollenvorselektion:** Bereichstitel begrenzen Abruf und erklären, warum ein Rollenkandidat untersucht wurde. Direkte Nachbarrollen fangen Grenzen und Schreibvarianten ab.
+2. **Lokaler Gesamtkorpusindex:** Beim Erstaufbau werden alle MFKL- und MFOK-Roll-JSONs ohne Originalbilder in einen SQLite-FTS5-Index übernommen. Die Suche fragt diesen Index korpusweit ab; ein bekannter Rollenbereich wie R0013 ist nie Produktionsvorgabe.
 3. **Retrieval und Identität getrennt:** Ein OCR-Frame kann ein guter Suchkandidat sein, ohne dieselbe Person zu belegen. Erst unabhängige, auch negative Evidenz bestimmt den Identity Score.
 4. **Lazy Images/OCR:** Nur die drei höchstgerankten Frames erhalten ein Originalbild. NARA Extracted Text wird zunächst übernommen; lokale OCR ist eine spätere Nachprüfung. Das vermeidet Mehrfachdownloads großer Rollen.
 5. **MFKL/MFOK getrennt:** Die Karteien haben verschiedene Archivfunktionen; ihre Treffer werden als unabhängige Evidenz verknüpft, nicht vermischt.

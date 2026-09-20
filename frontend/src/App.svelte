@@ -470,6 +470,7 @@
     const labels: Record<string, string> = {
       queued: 'Suchlauf wird angelegt',
       preparing_search: 'Suchprofil, Varianten und Abfrage werden vorbereitet',
+      indexing_a3340_corpus: 'A3340-Gesamtindex über alle MFKL- und MFOK-Rollen wird aufgebaut oder aktualisiert',
       searching_a3340: 'A3340-Rollen und Kartenframes werden eingegrenzt',
       materializing_card_frames: 'Konkrete Mitgliedskarten werden als Einzelbilder geladen',
       searching_catalog: 'NARA Catalog wird abgefragt',

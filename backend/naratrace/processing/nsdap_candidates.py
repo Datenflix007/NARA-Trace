@@ -5,10 +5,9 @@ from dataclasses import dataclass
 
 from naratrace.api.schemas import SearchRequest
 from naratrace.nsdap.frame_search import search_frames
+from naratrace.nsdap.frame_index import NsdapFrameIndex, extract_number_terms
 from naratrace.nsdap.manifest import NsdapManifestClient
 from naratrace.nsdap.models import FrameMatch, NsdapFrame, NsdapRoll
-from naratrace.nsdap.roll_index import RollIndex
-from naratrace.nsdap.roll_loader import NsdapRollLoader
 
 MAX_MATERIALIZED_A3340_FRAMES = 3
 
@@ -24,21 +23,34 @@ class NsdapCandidate:
 
 
 async def retrieve_nsdap_candidates(payload: SearchRequest) -> tuple[list[NsdapCandidate], list[str]]:
-    """Retrieve a bounded set of concrete A3340 frames, never a roll PDF."""
+    """Retrieve concrete A3340 frames from the complete local MFKL/MFOK index."""
     rolls = await NsdapManifestClient().load_rolls()
-    selected_rolls = RollIndex(rolls).select_for_name(payload.last_name, collections=("MFKL",))
+    selected_rolls = [roll for roll in rolls if roll.collection in {"MFKL", "MFOK"}]
     if not selected_rolls:
-        return [], ["A3340-Rollenindex fand keinen passenden MFKL-Bereich."]
+        return [], ["A3340-Manifest enthÃ¤lt keine MFKL- oder MFOK-Rollen."]
 
-    loader = NsdapRollLoader()
+    frame_index = NsdapFrameIndex()
+    build = await frame_index.build_all(selected_rolls)
+    indexed_rolls, _ = frame_index.index_status()
+    warnings = [
+        f"A3340-Korpusindex: {indexed_rolls}/{len(selected_rolls)} MFKL/MFOK-Rollen lokal durchsuchbar.",
+        "A3340-Retrieval durchsucht den lokalen Gesamtindex, nicht eine bekannte Rolle oder einen festen R-Bereich.",
+    ]
+    if build.failed_rolls:
+        warnings.append(f"{build.failed_rolls} Roll-JSON-Dateien konnten im aktuellen Lauf nicht indexiert werden.")
+        warnings.extend(build.warnings[:8])
+
+    frames = frame_index.search_frames(
+        selected_rolls,
+        surname=payload.last_name,
+        membership_number=payload.membership_number,
+    )
     matches: list[NsdapCandidate] = []
-    warnings = ["A3340-Retrieval: " + ", ".join(f"{roll.collection} {roll.box}" for roll in selected_rolls)]
-    for roll in selected_rolls:
-        frames = await loader.load_frames(roll)
-        if payload.membership_number:
-            matches.extend(number_matches(roll, frames, payload.membership_number))
-        for match in search_frames(frames, payload.first_name, payload.last_name, limit=120):
-            matches.append(NsdapCandidate(roll=roll, frame_match=strengthen_with_number(match, payload.membership_number)))
+    for frame in frames:
+        if payload.membership_number and frame_contains_number(frame, payload.membership_number):
+            matches.append(NsdapCandidate(frame.roll, FrameMatch(frame, 100.0, (), "membership_number_exact")))
+    for match in search_frames(frames, payload.first_name, payload.last_name, limit=600):
+        matches.append(NsdapCandidate(roll=match.frame.roll, frame_match=strengthen_with_number(match, payload.membership_number)))
 
     matches.sort(key=lambda candidate: (-candidate.frame_match.retrieval_score, candidate.roll.box, candidate.frame.frame_number))
     return dedupe_frames(matches)[:MAX_MATERIALIZED_A3340_FRAMES], warnings
@@ -59,8 +71,15 @@ def number_matches(roll: NsdapRoll, frames: list[NsdapFrame], membership_number:
     return [
         NsdapCandidate(roll, FrameMatch(frame, 100.0, (), "membership_number_exact"))
         for frame in frames
-        if digits in re.sub(r"\D+", "", frame.extracted_text or "")
+        if digits in extract_number_terms(frame.extracted_text or "")
     ]
+
+
+def frame_contains_number(frame: NsdapFrame, membership_number: str) -> bool:
+    digits = re.sub(r"\D+", "", membership_number)
+    if not digits:
+        return False
+    return digits in extract_number_terms(frame.extracted_text or "")
 
 
 def dedupe_frames(candidates: list[NsdapCandidate]) -> list[NsdapCandidate]:

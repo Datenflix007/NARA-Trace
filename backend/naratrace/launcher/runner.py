@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import socket
 import threading
@@ -19,12 +20,18 @@ LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    if args.refresh_a3340_index and not args.index_a3340:
+        raise SystemExit("--refresh-a3340-index requires --index-a3340.")
     validate_host(args.host, args.allow_non_localhost)
-    ensure_port_available(args.host, args.port)
     apply_cli_overrides(args)
 
     paths = ensure_local_directories()
     init_database(paths=paths)
+    if args.index_a3340:
+        build_a3340_index(refresh=args.refresh_a3340_index)
+        return
+
+    ensure_port_available(args.host, args.port)
 
     base_url = f"http://{args.host}:{args.port}"
     if not args.no_browser:
@@ -49,6 +56,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--reload", action="store_true", help="Enable Uvicorn reload for development")
     parser.add_argument("--no-browser", action="store_true", help="Start server without opening a browser")
     parser.add_argument(
+        "--index-a3340",
+        action="store_true",
+        help="Build or resume the local FTS5 index for all official MFKL and MFOK roll JSON files, then exit.",
+    )
+    parser.add_argument(
+        "--refresh-a3340-index",
+        action="store_true",
+        help="Rebuild the local A3340 FTS5 index from the official roll JSON files (requires --index-a3340).",
+    )
+    parser.add_argument(
         "--allow-non-localhost",
         action="store_true",
         help="Allow binding to a non-localhost interface. Disabled by default for local-only operation.",
@@ -61,6 +78,28 @@ def apply_cli_overrides(args: argparse.Namespace) -> None:
     os.environ["NARATRACE_PORT"] = str(args.port)
     os.environ["NARATRACE_LOG_LEVEL"] = str(args.log_level)
     reset_settings_cache()
+
+
+def build_a3340_index(*, refresh: bool) -> None:
+    from naratrace.nsdap.frame_index import NsdapFrameIndex
+    from naratrace.nsdap.manifest import NsdapManifestClient
+
+    async def run() -> None:
+        rolls = await NsdapManifestClient().load_rolls(refresh=refresh)
+
+        async def show_progress(completed: int, total: int) -> None:
+            if completed == total or completed % 100 == 0:
+                print(f"A3340-Index: {completed}/{total} Rollen verarbeitet")
+
+        result = await NsdapFrameIndex().build_all(rolls, refresh=refresh, on_progress=show_progress)
+        print(
+            "A3340-Index abgeschlossen: "
+            f"{result.indexed_rolls} neu, {result.skipped_rolls} bereits vorhanden, {result.failed_rolls} fehlgeschlagen."
+        )
+        for warning in result.warnings[:20]:
+            print(f"Warnung: {warning}")
+
+    asyncio.run(run())
 
 
 def validate_host(host: str, allow_non_localhost: bool) -> None:

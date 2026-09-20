@@ -15,6 +15,14 @@ python -m naratrace --port 8766
 
 Hinterlege deinen persönlichen NARA-Catalog-API-Schlüssel unter **Einstellungen** und prüfe ihn dort. Er bleibt im Betriebssystem-Keyring, nie im Browser, in SQLite oder im Export. Das A3340 Open Dataset ist ein separater öffentlicher Datenweg; dafür ist kein Catalog-Key erforderlich.
 
+Für den ersten vollständigen A3340-Durchlauf kann der lokale Textindex bewusst vorab aufgebaut werden. Das lädt alle offiziellen MFKL- und MFOK-Roll-JSON-Dateien, aber keine Massenkopie der Kartenbilder:
+
+```powershell
+python -m naratrace --index-a3340
+```
+
+Der Befehl ist fortsetzbar; nur noch nicht indexierte Rollen werden geladen. `--refresh-a3340-index` baut den Textindex bewusst neu auf.
+
 ## Suche anlegen
 
 1. Öffne **Neue Suche** und trage mindestens einen Nachnamen ein.

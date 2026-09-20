@@ -10,11 +10,11 @@ NARA-Trace soll Personen in NARAs digitalisierter NSDAP-Mitgliederkartei A3340 q
 
 - [x] Lokales FastAPI-/Svelte-System, SQLite-Suchverläufe, Exporte, lokale Dokumente, TIFF-Anzeige, Transkripte und manuelle Korrekturen vorhanden.
 - [x] NARA Catalog API v2 ist mit lokalem Keyring-Key, Pagination, Fehlerbehandlung und klarer Mock-Trennung angebunden.
-- [x] Bestehender Suchjob verwendet noch Catalog-Retrieval und eine einfache gemeinsame Bewertung in `processing/jobs.py`.
+- [x] Suchjob nutzt den A3340-FTS5-Gesamtindex primär und den Catalog als dokumentierten Fallback; Identity Ranking ist weiterhin eine offene getrennte Ausbaustufe.
 - [x] Offizielles NARA-Manifest `docs/nsdap.json` geprüft: 5.420 Rollen (3.153 MFKL, 2.267 MFOK; Abruf 2026-09-20).
 - [x] Neue Schicht `naratrace.nsdap` angelegt: Manifest-/Roll-Cache, Rollenmodelle, Bereichsauswahl, Roll-JSON-Lader, Frame-Provenienz und erstes retrieval-orientiertes Frame-Matching.
 - [x] Gewichtete Namensnormalisierung für Bindestriche, Umlaute, ß und Adelsprädikate angelegt.
-- [x] Search Jobs verwenden für MFKL zuerst die NSDAP-Schicht und speichern nur konkrete Kartenframes als Treffer.
+- [x] Search Jobs bauen beziehungsweise aktualisieren einen lokalen Gesamtindex über alle MFKL- und MFOK-Rollen und speichern nur konkrete Kartenframes als Treffer.
 
 ## Zielarchitektur
 
@@ -34,10 +34,10 @@ Der Catalog bleibt Metadaten-/Provenienz-/Fallback-Quelle. Das A3340 Open Datase
 
 - [x] Manifestmodell für NAID, agency, box, title, S3-Pfad und Bereichsgrenzen implementiert.
 - [x] Lokaler Manifestcache und gezielter Roll-JSON-Cache implementiert.
-- [x] MFKL/MFOK getrennt auswählbar; primäre Rolle und Nachbarrollen begrenzt.
+- [x] MFKL/MFOK-Rollen werden vollständig im lokalen Frameindex erfasst; keine bekannte Rolle und kein fester R-Bereich wird für die Suche vorgegeben.
 - [x] Unit Tests für Bereichsauswahl und Manifest-/Roll-Parsing erstellt.
 - [ ] Manifestcache mit Abrufdatum/ETag und administrativem Refresh sichtbar machen.
-- [ ] Rollenindex in SQLite/FTS5 materialisieren, ohne vollständigen Bilddownload.
+- [x] Persistenten SQLite-FTS5-Frameindex für alle geladenen MFKL-/MFOK-Roll-JSONs implementiert; Originalbilder bleiben ausgeschlossen.
 
 ## Phase 3 – Namensnormalisierung
 
@@ -80,7 +80,7 @@ Der Catalog bleibt Metadaten-/Provenienz-/Fallback-Quelle. Das A3340 Open Datase
 
 - [x] Erweiterbare Fixture-Struktur `backend/tests/fixtures/nsdap_gold/` angelegt.
 - [x] PSN-Fall als ausdrücklich unaufgelöste Fixture vorbereitet; keine NAID-, Rollen- oder Frame-Hartcodierung.
-- [x] Reale Recherche gegen die allgemeine Rollen-/Roll-JSON-Schicht: `Paul Schultze-Naumburg` begrenzt MFKL auf R0012–R0014; in R0013 dokumentiert Frame 2947 die Mitgliedsnummer 347541, Frame 2948 ist die anschließende Karteiseite. Noch keine Goldfixture, weil Bildprüfung und allgemeines Identity Ranking fehlen.
+- [x] Reale Recherche gegen die allgemeine Rollen-/Roll-JSON-Schicht: R0013 Frame 2947 dokumentiert die Mitgliedsnummer 347541, Frame 2948 ist die anschließende Karteiseite. Der Produktionspfad verwendet jedoch keinen bekannten R0013-/Nachbarrollenbereich, sondern den Gesamtindex. Noch keine Goldfixture, weil Bildprüfung und allgemeines Identity Ranking fehlen.
 - [ ] Tatsächliche Paul-Schultze-Naumburg-Karte über die allgemeine Pipeline und Originalbild quellenkritisch verifizieren.
 - [ ] Erst dann Goldreferenz, Tests A–D und Top-5/Top-1-Auswertung hinzufügen.
 - [ ] Zusätzliche unabhängige Goldfälle ergänzen; Recall@1/@5/@10/@20 und MRR messen.
@@ -111,7 +111,7 @@ Der Catalog bleibt Metadaten-/Provenienz-/Fallback-Quelle. Das A3340 Open Datase
 
 ## Aktuelle Blocker
 
-- [ ] Die echte Pipeline ist noch nicht von Catalog-only auf A3340-Rollenretrieval umgestellt.
+- [ ] Der erste vollständige lokale A3340-Korpusaufbau muss auf einem realen Rechner gegen alle offiziellen Roll-JSON-Dateien durchgeführt und auf Abbrüche/Rate-Limits geprüft werden.
 - [ ] Der PSN-Goldstandard darf erst nach reproduzierbarer Originalbildprüfung eingetragen werden.
 - [ ] Feldextraktion für historische OCR ist noch nicht implementiert.
 
@@ -124,7 +124,7 @@ Der Catalog bleibt Metadaten-/Provenienz-/Fallback-Quelle. Das A3340 Open Datase
 ## Entscheidungen / Architecture Decisions
 
 - [x] A3340 Open Dataset für Roll-/Frame-Retrieval; Catalog API für Metadaten, Provenienz und Fallback.
-- [x] Rollenvorselektion mit direkten Nachbarn statt corpusweiter OCR-Suche.
+- [x] Gesamtkorpus wird einmalig aus den Roll-JSONs in SQLite FTS5 indexiert; Suchläufe fragen anschließend den lokalen Index ab statt nur Nachbarrollen oder das entfernte Korpus erneut zu laden.
 - [x] MFKL und MFOK getrennt verarbeiten und erst als Evidenz verknüpfen.
 - [x] Retrieval Score und Identity Score konzeptionell trennen.
 - [x] Originalbilder lazy laden; keine Massen-OCR großer Rollen im Suchpfad.
@@ -142,8 +142,8 @@ Der Catalog bleibt Metadaten-/Provenienz-/Fallback-Quelle. Das A3340 Open Datase
 ## Nächste konkrete Aufgaben
 
 1. `QueryPlanner` und `candidate_pipeline` aus `processing/jobs.py` auslagern.
-2. Die neue NSDAP-Schicht als primären MFKL-Retrieval-Pass in einen Search Job integrieren, inklusive strukturierter Debugdaten.
-3. Gegen die allgemeine Pipeline nur die drei begrenzten MFKL-Nachbarrollen laden und den PSN-Kandidaten quellenkritisch auf Frame/Originalbild prüfen.
+2. Vollständigen MFKL-/MFOK-Index mit `python -m naratrace --index-a3340` aufbauen und Laufzeit, Cachegröße sowie Fehlerfälle dokumentieren.
+3. Den PSN-Kandidaten über die allgemeine Korpussuche ermitteln und Frame/Originalbild quellenkritisch prüfen.
 4. Mitgliedsnummer-/Datum-/Ort-Extraktion, negative Evidenz und getrenntes Identity Ranking implementieren.
 5. Erst nach erfolgreicher Prüfung Goldfixture konkretisieren, Regressionsevaluation hinzufügen und die Frontend-Provenienz erweitern.
 
@@ -152,6 +152,7 @@ Der Catalog bleibt Metadaten-/Provenienz-/Fallback-Quelle. Das A3340 Open Datase
 - [x] 2026-09-20: Architektur- und Datenquellenanalyse abgeschlossen; offizielle Manifest- und Roll-JSON-Struktur live geprüft.
 - [x] 2026-09-20: NSDAP-Basisschicht, gewichtete Namensvarianten und Unit Tests implementiert.
 - [x] 2026-09-20: Direkter MFKL-Jobpfad ergänzt: die Suche mit `347541` erzeugt R0013 Frame 2947/2948 als einzelne Kartenframes statt eines Rollen-PDFs; öffentliche `medialz`-URLs umgehen den nicht zugänglichen Legacy-S3-Pfad.
-- [x] 2026-09-20: Backend-Tests `python -m pytest tests` erfolgreich (33 bestanden); neuer Manifest-/Rollen-Smoke-Test gegen offizielle Quelle erfolgreich.
+- [x] 2026-09-20: Direkter A3340-Pfad auf einen persistenten SQLite-FTS5-Gesamtindex umgestellt: MFKL und MFOK werden über alle Rollen indexiert; spätere Suchläufe verwenden diesen Index statt eines auf R0013 begrenzten Abrufs.
+- [x] 2026-09-20: Backend-Tests `python -m pytest tests` erfolgreich (40 bestanden); neuer Manifest-/Rollen-Smoke-Test gegen offizielle Quelle erfolgreich.
 - [x] 2026-09-20: Frontend-Tests `npm run test -- --run` erfolgreich (18 bestanden); `npm run build` erfolgreich.
 - [x] 2026-09-20: `git diff --check` ohne Befund.
