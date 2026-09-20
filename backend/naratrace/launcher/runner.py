@@ -28,7 +28,7 @@ def main(argv: list[str] | None = None) -> None:
     paths = ensure_local_directories()
     init_database(paths=paths)
     if args.index_a3340:
-        build_a3340_index(refresh=args.refresh_a3340_index)
+        build_a3340_index(refresh=args.refresh_a3340_index, concurrency=args.a3340_concurrency)
         return
 
     ensure_port_available(args.host, args.port)
@@ -66,6 +66,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Rebuild the local A3340 FTS5 index from the official roll JSON files (requires --index-a3340).",
     )
     parser.add_argument(
+        "--a3340-concurrency",
+        type=int,
+        default=settings.a3340_index_concurrency,
+        choices=range(1, 33),
+        metavar="1-32",
+        help="Parallel roll-JSON requests while building the A3340 index. Standard: 16, maximum: 32.",
+    )
+    parser.add_argument(
         "--allow-non-localhost",
         action="store_true",
         help="Allow binding to a non-localhost interface. Disabled by default for local-only operation.",
@@ -77,10 +85,11 @@ def apply_cli_overrides(args: argparse.Namespace) -> None:
     os.environ["NARATRACE_HOST"] = str(args.host)
     os.environ["NARATRACE_PORT"] = str(args.port)
     os.environ["NARATRACE_LOG_LEVEL"] = str(args.log_level)
+    os.environ["NARATRACE_A3340_INDEX_CONCURRENCY"] = str(args.a3340_concurrency)
     reset_settings_cache()
 
 
-def build_a3340_index(*, refresh: bool) -> None:
+def build_a3340_index(*, refresh: bool, concurrency: int) -> None:
     from naratrace.nsdap.frame_index import NsdapFrameIndex
     from naratrace.nsdap.manifest import NsdapManifestClient
 
@@ -91,7 +100,12 @@ def build_a3340_index(*, refresh: bool) -> None:
             if completed == total or completed % 100 == 0:
                 print(f"A3340-Index: {completed}/{total} Rollen verarbeitet")
 
-        result = await NsdapFrameIndex().build_all(rolls, refresh=refresh, on_progress=show_progress)
+        result = await NsdapFrameIndex().build_all(
+            rolls,
+            refresh=refresh,
+            concurrency=concurrency,
+            on_progress=show_progress,
+        )
         print(
             "A3340-Index abgeschlossen: "
             f"{result.indexed_rolls} neu, {result.skipped_rolls} bereits vorhanden, {result.failed_rolls} fehlgeschlagen."

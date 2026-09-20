@@ -7,9 +7,12 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "vitest"
+    "test": "vitest",
+    "check": "svelte-check --tsconfig ./tsconfig.json && tsc -p tsconfig.node.json --noEmit"
   },
   "dependencies": {
+    "@datenflix/ts-text-marker-viewer": "file:../../TS_TextMarkerViewer",
+    "@datenflix007/ts-text-marker-core": "file:../../TS_TextMarkerCore",
     "svelte": "5.56.8"
   },
   "devDependencies": {
@@ -17,7 +20,8 @@
     "@testing-library/jest-dom": "7.0.0",
     "@testing-library/svelte": "5.4.2",
     "jsdom": "29.1.1",
-    "typescript": "7.0.2",
+    "svelte-check": "^4.3.4",
+    "typescript": "^5.9.3",
     "vite": "8.1.5",
     "vitest": "4.1.10"
   }

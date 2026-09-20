@@ -1,12 +1,15 @@
 {
   "extends": "./tsconfig.node.json",
   "compilerOptions": {
-    "allowJs": true,
-    "checkJs": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
     "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@datenflix/ts-text-marker-viewer": ["../../TS_TextMarkerViewer/dist/index.d.ts"],
+      "@datenflix007/ts-text-marker-core": ["../../TS_TextMarkerCore/dist/index.d.ts"]
+    },
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "sourceMap": true,
@@ -14,5 +17,5 @@
     "target": "ES2022",
     "types": ["vitest/globals", "@testing-library/jest-dom"]
   },
-  "include": ["src/**/*.d.ts", "src/**/*.ts", "src/**/*.svelte", "vite.config.ts"]
+  "include": ["src/**/*.d.ts", "src/**/*.ts", "src/**/*.svelte"]
 }

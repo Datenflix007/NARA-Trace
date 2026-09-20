@@ -103,6 +103,7 @@ describe('App', () => {
       '/demo/schultze-naumburg.png'
     );
     expect(screen.queryByText(/Ulm|Münsterplatz/)).toBeNull();
+    expect(screen.queryByText(/MOCK-DATENSATZ/)).toBeNull();
     expect(
       screen.getByText(/U.S. National Archives and Records Administration - National Archives Catalog/)
     ).toBeTruthy();
@@ -126,6 +127,32 @@ describe('App', () => {
     });
   });
 
+  it('aktualisiert den API-Schlüsselstatus beim erneuten Fokussieren des Fensters', async () => {
+    let configured = true;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input) === '/api/settings') {
+        return new Response(JSON.stringify(settingsResponse({ nara_api_key_configured: configured })), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    render(App);
+
+    await waitFor(() => {
+      expect(screen.getByText('API-Schlüssel aktiv')).toBeTruthy();
+    });
+
+    configured = false;
+    window.dispatchEvent(new Event('focus'));
+
+    await waitFor(() => {
+      expect(screen.getByText('API-Schlüssel fehlt')).toBeTruthy();
+    });
+  });
+
   it('öffnet vom Startseiten-Beispiel die Detailansicht mit synchroner Markierung', async () => {
     render(App);
 
@@ -143,6 +170,14 @@ describe('App', () => {
     await fireEvent.mouseEnter(transcriptNameLine);
 
     expect(originalNameHotspot.classList.contains('active')).toBe(true);
+
+    const transcriptBirthDateLine = screen.getByRole('button', { name: /Geburtsdatum 10\.06\.1869/ });
+    const originalBirthDateHotspot = screen.getByRole('button', { name: 'Geburtsdatum' });
+    await fireEvent.mouseEnter(transcriptBirthDateLine);
+
+    expect(originalBirthDateHotspot.classList.contains('active')).toBe(true);
+    expect(originalBirthDateHotspot.getAttribute('style')).toContain('left: 23.664%');
+    expect(originalBirthDateHotspot.getAttribute('style')).toContain('top: 27.793%');
   });
 
   it('wechselt per Hauptnavigation zur neuen Suche ohne Demo-Schaltfläche', async () => {
@@ -176,9 +211,10 @@ describe('App', () => {
 
     expect(screen.getByRole('heading', { name: 'Methodik' })).toBeTruthy();
     expect(screen.getByText('Ähnlichkeit ist kein Identitätsnachweis')).toBeTruthy();
-    expect(screen.getByText('Von der Suchangabe zum prüfbaren Treffer')).toBeTruthy();
+    expect(screen.getByText('Vier Ebenen, die getrennt bleiben müssen')).toBeTruthy();
+    expect(screen.getByText('Vom Suchprofil zur Quellenprüfung')).toBeTruthy();
     expect(screen.getByText('Suchprofil erfassen')).toBeTruthy();
-    expect(screen.getByText('Quellenprüfung')).toBeTruthy();
+    expect(screen.getByText('Quellenkritisch entscheiden')).toBeTruthy();
     expect(screen.getByText('Was NARATrace nicht entscheidet')).toBeTruthy();
   });
 

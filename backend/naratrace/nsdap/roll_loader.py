@@ -15,8 +15,10 @@ S3_HTTP_BASE = "https://nara-nsdap.s3.amazonaws.com"
 
 
 class NsdapRollLoader:
-    def __init__(self, timeout_seconds: float = 60.0) -> None:
+    def __init__(self, timeout_seconds: float = 60.0, *, reuse_connections: bool = False) -> None:
         self.timeout = httpx.Timeout(timeout_seconds, connect=10.0)
+        self.reuse_connections = reuse_connections
+        self._client: httpx.AsyncClient | None = None
 
     async def load_frames(self, roll: NsdapRoll, refresh: bool = False) -> list[NsdapFrame]:
         cache_path = get_roll_cache_path(roll)
@@ -26,16 +28,7 @@ class NsdapRollLoader:
             except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
                 pass
         url = roll_json_url(roll)
-        try:
-            async with httpx.AsyncClient(
-                timeout=self.timeout,
-                follow_redirects=True,
-                headers={"User-Agent": f"NARATrace/{__version__} local historical research client"},
-            ) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise NsdapDataError(f"Roll-JSON für {roll.collection} {roll.box} ist nicht erreichbar: {exc}") from exc
+        response = await self._get_response(url, roll)
         try:
             frames = parse_roll_document(response.content, roll)
         except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
@@ -43,6 +36,37 @@ class NsdapRollLoader:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_bytes(response.content)
         return frames
+
+    async def aclose(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    async def _get_response(self, url: str, roll: NsdapRoll) -> httpx.Response:
+        try:
+            if self.reuse_connections:
+                client = self._shared_client()
+                response = await client.get(url)
+                response.raise_for_status()
+                return response
+            async with self._new_client() as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                return response
+        except httpx.HTTPError as exc:
+            raise NsdapDataError(f"Roll-JSON für {roll.collection} {roll.box} ist nicht erreichbar: {exc}") from exc
+
+    def _shared_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = self._new_client()
+        return self._client
+
+    def _new_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            timeout=self.timeout,
+            follow_redirects=True,
+            headers={"User-Agent": f"NARATrace/{__version__} local historical research client"},
+        )
 
 
 def roll_json_url(roll: NsdapRoll) -> str:

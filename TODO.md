@@ -90,9 +90,9 @@ Der Catalog bleibt Metadaten-/Provenienz-/Fallback-Quelle. Das A3340 Open Datase
 
 - [x] Bestehende Suche, Fortschritt, Treffer, Detailansicht, Transkript, manuelle Korrektur und Verläufe erhalten.
 - [x] Konkrete Kartenframes werden mit Rolle, Frame, `objectFilename`, NARA-Extracted-Text und Originalbild-Provenienz gespeichert.
-- [x] Transkriptansicht markiert Suchbegriffe und robuste Nummernformen direkt im Text; der TextMarkerEditor bleibt ein optionaler Adapter, da seine GitHub-Pakete aktuell nicht als stabile Runtime-Dependency ausgeliefert werden.
+- [x] Transkriptansicht markiert Suchbegriffe und robuste Nummernformen direkt im Text; der öffentliche TS_TextMarkerViewer ist als lazy geladener, typisierter Adapter über lokale Workspace-Abhängigkeiten eingebunden.
 - [ ] Debug-/Methodikansicht mit Varianten, Rollenwahl, Frameanzahl und Scoreaufschlüsselung bauen.
-- [ ] Kandidatenvergleich und semantische Transkriptmarkierung vorbereiten; TS_TextMarker nur über optionalen Adapter anbinden.
+- [ ] Kandidatenvergleich und weitere semantische Transkriptmarkierungen vorbereiten.
 
 ## Phase 10 – Dokumentation
 
@@ -105,6 +105,7 @@ Der Catalog bleibt Metadaten-/Provenienz-/Fallback-Quelle. Das A3340 Open Datase
 ## Phase 11 – Performance und Packaging
 
 - [ ] FTS5-Index über lokale Roll-JSONs benchmarken.
+- [x] A3340-Erstindex: Netzwerkabrufe auf 16 kontrollierte parallele Verbindungen mit CLI-/Umgebungsvariable (1–32) umgestellt; SQLite-Schreibzugriffe bleiben serialisiert.
 - [ ] Cache-Größen, Refresh, Beschädigung und LRU-Strategie festlegen.
 - [ ] Rate-Limits, Offline-Verhalten, Timeouts und große Rollen testen.
 - [ ] Packaging nach stabiler Pipeline überprüfen.
@@ -155,4 +156,8 @@ Der Catalog bleibt Metadaten-/Provenienz-/Fallback-Quelle. Das A3340 Open Datase
 - [x] 2026-09-20: Direkter A3340-Pfad auf einen persistenten SQLite-FTS5-Gesamtindex umgestellt: MFKL und MFOK werden über alle Rollen indexiert; spätere Suchläufe verwenden diesen Index statt eines auf R0013 begrenzten Abrufs.
 - [x] 2026-09-20: Backend-Tests `python -m pytest tests` erfolgreich (40 bestanden); neuer Manifest-/Rollen-Smoke-Test gegen offizielle Quelle erfolgreich.
 - [x] 2026-09-20: Frontend-Tests `npm run test -- --run` erfolgreich (18 bestanden); `npm run build` erfolgreich.
+- [x] 2026-09-20: Frontend strikt auf TypeScript-Prüfung umgestellt (`npm run check`); TS_TextMarker-Adapter und Annotation-Unit-Tests ergänzt; Tests (20) und Produktionsbuild erfolgreich.
+- [x] 2026-09-20: `quickstart.bat` erkennt eine bereits laufende NARATrace-Instanz auf Port 8766 und nutzt bei fremdem Portkonflikt automatisch den nächsten freien lokalen Port.
+- [x] 2026-09-20: Startseiten-MOCK-Treffer entfernt; Methodik als Forschungsmodell über Fragestellung, Archivspur, Evidenz und Befund gestaltet; A3340-Indexabrufe parallelisiert und konfigurierbar gemacht.
+- [x] 2026-09-20: API-Key-Status wird im Frontend beim Fokuswechsel und alle 15 Sekunden im sichtbaren Tab erneut vom lokalen Backend abgefragt; Header und Einstellungen zeigen den aktualisierten Zustand.
 - [x] 2026-09-20: `git diff --check` ohne Befund.

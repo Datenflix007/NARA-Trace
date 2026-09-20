@@ -19,6 +19,7 @@ class AppSettings(BaseSettings):
     data_dir: str | None = Field(default=None, alias="NARATRACE_DATA_DIR")
     nara_api_key: SecretStr | None = Field(default=None, alias="NARA_API_KEY")
     nara_monthly_request_limit: int = Field(default=10000, ge=1, alias="NARATRACE_NARA_MONTHLY_REQUEST_LIMIT")
+    a3340_index_concurrency: int = Field(default=16, ge=1, le=32, alias="NARATRACE_A3340_INDEX_CONCURRENCY")
 
     model_config = SettingsConfigDict(
         env_file=".env",

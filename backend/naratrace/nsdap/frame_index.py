@@ -52,7 +52,7 @@ class NsdapFrameIndex:
         *,
         loader: NsdapRollLoader | None = None,
         refresh: bool = False,
-        concurrency: int = 8,
+        concurrency: int = 16,
         on_progress: ProgressCallback | None = None,
     ) -> NsdapIndexBuildResult:
         """Index all supplied rolls with bounded network concurrency.
@@ -71,7 +71,8 @@ class NsdapFrameIndex:
         if not pending:
             return NsdapIndexBuildResult(0, len(selected_rolls), 0, len(selected_rolls), ())
 
-        active_loader = loader or NsdapRollLoader()
+        owns_loader = loader is None
+        active_loader = loader or NsdapRollLoader(reuse_connections=True)
         semaphore = asyncio.Semaphore(max(1, concurrency))
         completed = 0
         indexed = 0
@@ -102,7 +103,11 @@ class NsdapFrameIndex:
                     if maybe_awaitable is not None:
                         await maybe_awaitable
 
-        await asyncio.gather(*(index_one(roll) for roll in pending))
+        try:
+            await asyncio.gather(*(index_one(roll) for roll in pending))
+        finally:
+            if owns_loader:
+                await active_loader.aclose()
         return NsdapIndexBuildResult(indexed, len(selected_rolls) - len(pending), failed, len(selected_rolls), tuple(warnings))
 
     def search_frames(self, rolls: Iterable[NsdapRoll], *, surname: str, membership_number: str | None, limit: int = 600) -> list[NsdapFrame]:

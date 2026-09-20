@@ -25,7 +25,23 @@ popd
 echo.
 echo [2/2] NARA-Trace wird gestartet...
 
-python -m naratrace --port 8766
+call :is_naratrace_running 8766
+if not errorlevel 1 (
+  echo NARATrace laeuft bereits unter http://127.0.0.1:8766
+  echo Die neu gebauten Frontend-Dateien werden von der laufenden Instanz verwendet.
+  start "" "http://127.0.0.1:8766"
+  endlocal
+  exit /b 0
+)
+
+call :find_free_port
+if errorlevel 1 goto no_free_port
+
+if not "%NARATRACE_PORT%"=="8766" (
+  echo [Hinweis] Port 8766 ist belegt. NARATrace startet stattdessen auf http://127.0.0.1:%NARATRACE_PORT%
+)
+
+python -m naratrace --port %NARATRACE_PORT%
 if errorlevel 1 goto error
 
 endlocal
@@ -35,6 +51,26 @@ exit /b 0
 echo.
 echo [FEHLER] Die Projektdateien wurden neben quickstart.bat nicht gefunden.
 echo Bitte quickstart.bat im NARA-Trace-Ordner ausfuehren.
+goto error
+
+:is_naratrace_running
+python -c "import json, sys, urllib.request; response = json.load(urllib.request.urlopen('http://127.0.0.1:%~1/api/health', timeout=2)); sys.exit(0 if response.get('app') == 'NARATrace' else 1)" >nul 2>&1
+exit /b %ERRORLEVEL%
+
+:find_free_port
+set "NARATRACE_PORT="
+for /L %%P in (8766,1,8776) do (
+  python -c "import socket; sock = socket.socket(); sock.bind(('127.0.0.1', %%P)); sock.close()" >nul 2>&1
+  if not errorlevel 1 (
+    set "NARATRACE_PORT=%%P"
+    exit /b 0
+  )
+)
+exit /b 1
+
+:no_free_port
+echo.
+echo [FEHLER] Kein freier lokaler Port zwischen 8766 und 8776 gefunden.
 goto error
 
 :index

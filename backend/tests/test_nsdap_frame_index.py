@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from naratrace.nsdap.frame_index import NsdapFrameIndex, extract_number_terms
@@ -26,6 +28,22 @@ class FakeRollLoader:
     async def load_frames(self, roll: NsdapRoll, refresh: bool = False) -> list[NsdapFrame]:
         self.calls.append(roll.naid)
         return self.frames_by_naid[roll.naid]
+
+
+class ConcurrentFakeRollLoader(FakeRollLoader):
+    def __init__(self, frames_by_naid: dict[str, list[NsdapFrame]]) -> None:
+        super().__init__(frames_by_naid)
+        self.active = 0
+        self.max_active = 0
+
+    async def load_frames(self, roll: NsdapRoll, refresh: bool = False) -> list[NsdapFrame]:
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            await asyncio.sleep(0.01)
+            return await super().load_frames(roll, refresh=refresh)
+        finally:
+            self.active -= 1
 
 
 @pytest.mark.asyncio
@@ -83,6 +101,22 @@ async def test_frame_index_resumes_without_downloading_indexed_rolls_again(tmp_p
     assert loader.calls == ["roll-1"]
     assert second.indexed_rolls == 0
     assert second.skipped_rolls == 1
+
+
+@pytest.mark.asyncio
+async def test_frame_index_bounds_parallel_roll_requests(tmp_path):
+    rolls = [make_roll(f"roll-{number}", "MFKL", f"R{number:04d}") for number in range(1, 5)]
+    frames_by_naid = {
+        roll.naid: [NsdapFrame(roll, 1, "object", "page.tif", "https://example.invalid/page.tif", "Anna Beispiel", {})]
+        for roll in rolls
+    }
+    loader = ConcurrentFakeRollLoader(frames_by_naid)
+    index = NsdapFrameIndex(tmp_path / "nsdap-frames.sqlite3")
+
+    result = await index.build_all(rolls, loader=loader, concurrency=2)
+
+    assert result.complete is True
+    assert loader.max_active == 2
 
 
 def test_number_term_extraction_keeps_fields_separate():

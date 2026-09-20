@@ -25,6 +25,7 @@
     type SearchResultResponse,
     type SettingsResponse
   } from './lib/api';
+  import TranscriptAnnotationViewer from './lib/TranscriptAnnotationViewer.svelte';
   import schultzePage2Url from './assets/demo/schultze-page-2.png';
 
   type RouteId = 'start' | 'search' | 'history' | 'local-documents' | 'settings' | 'methodology' | 'about' | 'result-detail';
@@ -114,8 +115,26 @@
   const SEARCH_STATUS_MAX_POLL_FAILURES = 5;
   const HISTORY_LOAD_RETRY_MS = 800;
   const HISTORY_LOAD_MAX_ATTEMPTS = 8;
+  const SETTINGS_STATUS_POLL_MS = 15_000;
   const MAX_SEARCH_CANDIDATES = 2000;
   const NARA_SEARCH_PAGE_SIZE = 100;
+  const DEMO_SOURCE_PAGE = { width: 1310, height: 1853 };
+
+  /**
+   * The source scan includes its full microfilm frame.  Store zones in source
+   * pixels and normalize only for rendering, so they retain their position at
+   * every display size and zoom level.
+   */
+  function sourceBox(x: number, y: number, width: number, height: number): TranscriptLine['box'] {
+    const percentage = (value: number, total: number) => Number(((value / total) * 100).toFixed(3));
+
+    return {
+      x: percentage(x, DEMO_SOURCE_PAGE.width),
+      y: percentage(y, DEMO_SOURCE_PAGE.height),
+      width: percentage(width, DEMO_SOURCE_PAGE.width),
+      height: percentage(height, DEMO_SOURCE_PAGE.height)
+    };
+  }
 
   const demoTranscriptLines: TranscriptLine[] = [
     {
@@ -123,49 +142,49 @@
       label: 'Name',
       value: 'Schultze-Naumburg, Paul',
       note: 'Namensfeld der Mitgliedskarte',
-      box: { x: 25.5, y: 27.4, width: 30.5, height: 3.8 }
+      box: sourceBox(310, 450, 410, 82)
     },
     {
       id: 'birth-date',
       label: 'Geburtsdatum',
       value: '10.06.1869',
       note: 'Geb.-Datum auf der Karte',
-      box: { x: 25.0, y: 32.4, width: 22.0, height: 3.4 }
+      box: sourceBox(310, 515, 185, 50)
     },
     {
       id: 'birth-place',
       label: 'Geburtsort',
       value: 'Almrich',
       note: 'Geb.-Ort auf der Karte',
-      box: { x: 46.0, y: 32.2, width: 13.5, height: 3.6 }
+      box: sourceBox(500, 515, 215, 50)
     },
     {
       id: 'membership',
       label: 'Mitgliedsnummer',
       value: '347 541',
       note: 'Mitgl.-Nr. auf der Karte',
-      box: { x: 25.0, y: 35.0, width: 28.0, height: 3.4 }
+      box: sourceBox(310, 558, 185, 42)
     },
     {
       id: 'admission',
       label: 'Aufnahme',
       value: '01.11.1930',
       note: 'Aufnahmedatum auf der Karte',
-      box: { x: 46.0, y: 35.0, width: 15.0, height: 3.4 }
+      box: sourceBox(495, 558, 225, 42)
     },
     {
       id: 'residence',
       label: 'Wohnort',
       value: 'Naumburg',
       note: 'Wohnortangabe aus der Karte',
-      box: { x: 7.0, y: 31.2, width: 16.0, height: 3.6 }
+      box: sourceBox(730, 465, 350, 95)
     },
     {
       id: 'later-residence',
       label: 'Späterer Wohnort',
       value: 'Weimar',
       note: 'spätere Wohnortangabe aus der Karte',
-      box: { x: 6.0, y: 38.0, width: 19.0, height: 3.8 }
+      box: sourceBox(730, 465, 350, 95)
     }
   ];
 
@@ -211,58 +230,6 @@
       ],
       recordYears: [1931],
       evidence: ['Name und Mitgliedsnummer passen.', 'Geburtsort Almrich sowie Wohnorte Naumburg und später Weimar stützen den Treffer.', 'Aktenfoto ist in Seite 4 der lokalen PDF enthalten.']
-    },
-    {
-      resultId: null,
-      jobId: null,
-      key: 'demo-mock-possible',
-      title: 'MOCK-DATENSATZ: ähnliche Schreibweise ohne sichere Lebensdaten',
-      matchScore: 58,
-      category: 'möglich',
-      dataSource: 'MOCK',
-      naid: 'MOCK-NAID-0002',
-      textOrigin: 'künstlicher Vergleichstreffer',
-      name: 'Paul Schultze Naumburg',
-      birthDate: 'nicht belegt',
-      birthPlace: 'nicht belegt',
-      residencePlace: 'Naumburg ähnlich',
-      portraitUrl: null,
-      sourcePageUrl: null,
-      sourceCatalogUrl: null,
-      sourcePageLabel: 'kein lokales Bild',
-      lines: [],
-      transcriptText: '',
-      transcriptSource: 'kein Transkript',
-      transcriptEdited: false,
-      mediaPages: [],
-      recordYears: [],
-      evidence: ['Namensähnlichkeit vorhanden.', 'Geburtsdaten fehlen.']
-    },
-    {
-      resultId: null,
-      jobId: null,
-      key: 'demo-mock-weak',
-      title: 'MOCK-DATENSATZ: widersprüchliche Personendaten',
-      matchScore: 34,
-      category: 'schwach',
-      dataSource: 'MOCK',
-      naid: 'MOCK-NAID-0003',
-      textOrigin: 'künstlicher Vergleichstreffer',
-      name: 'Paul Schulze',
-      birthDate: 'abweichend',
-      birthPlace: 'nicht belegt',
-      residencePlace: 'abweichender Ort',
-      portraitUrl: null,
-      sourcePageUrl: null,
-      sourceCatalogUrl: null,
-      sourcePageLabel: 'kein lokales Bild',
-      lines: [],
-      transcriptText: '',
-      transcriptSource: 'kein Transkript',
-      transcriptEdited: false,
-      mediaPages: [],
-      recordYears: [],
-      evidence: ['Nachname teilweise ähnlich.', 'Geburtsdatum widerspricht dem Suchprofil.']
     }
   ]);
 
@@ -311,8 +278,11 @@
   let localDocumentNotice = '';
   let settings: SettingsResponse | null = null;
   let settingsLoading = false;
+  let settingsRefreshing = false;
   let settingsError = '';
   let settingsNotice = '';
+  let settingsStatusUpdatedAt: number | null = null;
+  let settingsStatusRefreshTimer: ReturnType<typeof setInterval> | null = null;
   let naraApiKeyInput = '';
   let keyTest: ApiKeyTestResponse | null = null;
   let detailResult: DisplayResult | null = null;
@@ -365,6 +335,7 @@
 
     syncRoute();
     void loadSettings();
+    startSettingsStatusRefresh();
     if (activeRoute === 'history') {
       void loadHistory();
     }
@@ -372,6 +343,7 @@
 
     return () => {
       stopSearchTimer();
+      stopSettingsStatusRefresh();
       window.removeEventListener('hashchange', syncRoute);
     };
   });
@@ -459,6 +431,37 @@
     if (usage.percent_used >= 90) return 'danger';
     if (usage.percent_used >= 70) return 'warning';
     return 'ok';
+  }
+
+  function apiKeyStatusLabel(currentSettings: SettingsResponse | null) {
+    if (!currentSettings) return 'API-Status wird geladen';
+    return currentSettings.nara_api_key_configured ? 'API-Schlüssel aktiv' : 'API-Schlüssel fehlt';
+  }
+
+  function formatStatusRefreshTime(value: number | null) {
+    if (!value) return 'noch nicht aktualisiert';
+    return new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(value);
+  }
+
+  function startSettingsStatusRefresh() {
+    settingsStatusRefreshTimer = setInterval(refreshSettingsStatusOnFocus, SETTINGS_STATUS_POLL_MS);
+    window.addEventListener('focus', refreshSettingsStatusOnFocus);
+    document.addEventListener('visibilitychange', refreshSettingsStatusOnFocus);
+  }
+
+  function stopSettingsStatusRefresh() {
+    if (settingsStatusRefreshTimer) {
+      clearInterval(settingsStatusRefreshTimer);
+      settingsStatusRefreshTimer = null;
+    }
+    window.removeEventListener('focus', refreshSettingsStatusOnFocus);
+    document.removeEventListener('visibilitychange', refreshSettingsStatusOnFocus);
+  }
+
+  function refreshSettingsStatusOnFocus() {
+    if (document.visibilityState === 'visible') {
+      void loadSettings({ background: true });
+    }
   }
 
   function terminalJobStatus(status: string) {
@@ -1409,15 +1412,27 @@
     }
   }
 
-  async function loadSettings() {
-    settingsLoading = true;
-    settingsError = '';
+  async function loadSettings({ background = false }: { background?: boolean } = {}) {
+    if (settingsLoading || settingsRefreshing) return;
+    if (background) {
+      settingsRefreshing = true;
+    } else {
+      settingsLoading = true;
+      settingsError = '';
+    }
     try {
       settings = await fetchSettings();
+      settingsStatusUpdatedAt = Date.now();
     } catch (error) {
-      settingsError = error instanceof Error ? error.message : 'Die Einstellungen konnten nicht geladen werden.';
+      if (!background) {
+        settingsError = error instanceof Error ? error.message : 'Die Einstellungen konnten nicht geladen werden.';
+      }
     } finally {
-      settingsLoading = false;
+      if (background) {
+        settingsRefreshing = false;
+      } else {
+        settingsLoading = false;
+      }
     }
   }
 
@@ -1431,6 +1446,7 @@
     }
     try {
       settings = await saveNaraApiKey(naraApiKeyInput.trim());
+      settingsStatusUpdatedAt = Date.now();
       naraApiKeyInput = '';
       settingsNotice = 'NARA API-Schlüssel wurde lokal im Betriebssystem-Keyring gespeichert.';
     } catch (error) {
@@ -1457,6 +1473,7 @@
     keyTest = null;
     try {
       settings = await deleteNaraApiKey();
+      settingsStatusUpdatedAt = Date.now();
       settingsNotice = 'NARA API-Schlüssel wurde gelöscht.';
     } catch (error) {
       settingsError = error instanceof Error ? error.message : 'Der NARA API-Schlüssel konnte nicht gelöscht werden.';
@@ -1472,6 +1489,9 @@
   <div class="source">
     <span>Datenquelle: U.S. National Archives and Records Administration - National Archives Catalog</span>
     <span class="badge">NARA Catalog</span>
+    <span class:configured={settings?.nara_api_key_configured} class="api-key-status">
+      {apiKeyStatusLabel(settings)}
+    </span>
     {#if settings?.nara_api_key_configured}
       <span class={`quota-badge ${apiUsageTone(settings.nara_api_usage)}`}>
         NARA API: {apiUsageLabel(settings.nara_api_usage)}
@@ -1900,15 +1920,14 @@
                                 style={hotspotStyle(line)}
                                 type="button"
                                 aria-label={line.label}
+                                title={line.label}
                                 onpointerdown={(event) => event.stopPropagation()}
                                 onmouseenter={() => setHoveredLine(line.id)}
                                 onmouseleave={clearHoveredLine}
                                 onfocus={() => setHoveredLine(line.id)}
                                 onblur={clearHoveredLine}
                                 onclick={() => togglePinnedLine(line.id)}
-                              >
-                                <span>{line.label}</span>
-                              </button>
+                              ></button>
                             {/each}
                           </div>
                         </div>
@@ -2258,6 +2277,7 @@
       </div>
     </section>
   {:else if activeRoute === 'result-detail' && detailResult}
+    {@const selectedDetailResult = detailResult}
     <section class="detail-page">
       <div class="detail-header">
         <button class="button secondary" type="button" onclick={backFromDetail}>Zurück</button>
@@ -2279,19 +2299,19 @@
             {#if mediaPage}
               <div class="media-toolbar" aria-label="Mediensteuerung Vollansicht">
                 {#if detailResult.mediaPages.length > 1}
-                  <button class="button secondary compact-button" type="button" onclick={() => previousMediaPage(detailResult)} disabled={currentMediaIndex(detailResult) === 0}>
+                  <button class="button secondary compact-button" type="button" onclick={() => previousMediaPage(selectedDetailResult)} disabled={currentMediaIndex(selectedDetailResult) === 0}>
                     Zurück
                   </button>
-                  <span>{currentMediaIndex(detailResult) + 1} / {detailResult.mediaPages.length}</span>
-                  <button class="button secondary compact-button" type="button" onclick={() => nextMediaPage(detailResult)} disabled={currentMediaIndex(detailResult) >= detailResult.mediaPages.length - 1}>
+                  <span>{currentMediaIndex(selectedDetailResult) + 1} / {detailResult.mediaPages.length}</span>
+                  <button class="button secondary compact-button" type="button" onclick={() => nextMediaPage(selectedDetailResult)} disabled={currentMediaIndex(selectedDetailResult) >= detailResult.mediaPages.length - 1}>
                     Weiter
                   </button>
                 {/if}
                 {#if mediaPage.mediaType === 'image' && mediaPage.mediaUrl}
-                  <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(detailResult, 0.25)}>+</button>
-                  <span>{Math.round(mediaZoom(detailResult) * 100)} %</span>
-                  <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(detailResult, -0.25)}>-</button>
-                  <button class="button secondary compact-button" type="button" onclick={() => resetMediaTransform(detailResult)}>Reset</button>
+                  <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(selectedDetailResult, 0.25)}>+</button>
+                  <span>{Math.round(mediaZoom(selectedDetailResult) * 100)} %</span>
+                  <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(selectedDetailResult, -0.25)}>-</button>
+                  <button class="button secondary compact-button" type="button" onclick={() => resetMediaTransform(selectedDetailResult)}>Reset</button>
                 {/if}
               </div>
             {/if}
@@ -2302,11 +2322,11 @@
                   class:dragging={draggingMedia?.key === detailResult.key}
                   role="application"
                   aria-label={`Bildanzeige ${mediaPage.label}`}
-                  style={mediaTransformStyle(detailResult)}
-                  onpointerdown={(event) => beginMediaPan(event, detailResult)}
-                  onpointermove={(event) => moveMediaPan(event, detailResult)}
-                  onpointerup={(event) => endMediaPan(event, detailResult)}
-                  onpointercancel={(event) => endMediaPan(event, detailResult)}
+                  style={mediaTransformStyle(selectedDetailResult)}
+                  onpointerdown={(event) => beginMediaPan(event, selectedDetailResult)}
+                  onpointermove={(event) => moveMediaPan(event, selectedDetailResult)}
+                  onpointerup={(event) => endMediaPan(event, selectedDetailResult)}
+                  onpointercancel={(event) => endMediaPan(event, selectedDetailResult)}
                 >
                   <img src={mediaPage.mediaUrl} alt={mediaPage.label} draggable="false" />
                   {#each detailResult.lines as line}
@@ -2316,15 +2336,14 @@
                       style={hotspotStyle(line)}
                       type="button"
                       aria-label={line.label}
+                      title={line.label}
                       onpointerdown={(event) => event.stopPropagation()}
                       onmouseenter={() => setHoveredLine(line.id)}
                       onmouseleave={clearHoveredLine}
                       onfocus={() => setHoveredLine(line.id)}
                       onblur={clearHoveredLine}
                       onclick={() => togglePinnedLine(line.id)}
-                    >
-                      <span>{line.label}</span>
-                    </button>
+                    ></button>
                   {/each}
                 </div>
               </div>
@@ -2417,6 +2436,13 @@
                 </p>
               </section>
             {/if}
+            <TranscriptAnnotationViewer
+              documentId={`naratrace-${detailResult.key}`}
+              title={detailResult.title}
+              text={transcriptDraft}
+              source={detailResult.transcriptSource}
+              terms={detailResult.highlightTerms ?? []}
+            />
             <label>
               Transkription
               <textarea class="transcript-editor" bind:value={transcriptDraft} rows="16"></textarea>
@@ -2597,7 +2623,10 @@
           </p>
           <dl class="settings-status-list">
             <dt>Status</dt>
-            <dd>{settings?.nara_api_key_configured ? `eingerichtet (${settings.nara_api_key_source})` : 'nicht eingerichtet'}</dd>
+            <dd>
+              {settings?.nara_api_key_configured ? `eingerichtet (${settings.nara_api_key_source})` : 'nicht eingerichtet'}
+              <small>zuletzt geprüft: {formatStatusRefreshTime(settingsStatusUpdatedAt)}</small>
+            </dd>
             <dt>Lokaler API-Zähler</dt>
             <dd>{settings ? apiUsageLabel(settings.nara_api_usage) : 'nicht geladen'}</dd>
           </dl>
@@ -2619,8 +2648,8 @@
         <section class="status-panel">
           <h2>Lokale Daten</h2>
           <p>Cache, Dokumente, OCR-Arbeitsdateien und Datenbank werden im lokalen App-Datenverzeichnis gespeichert.</p>
-          <button class="button secondary" type="button" onclick={loadSettings} disabled={settingsLoading}>
-            {settingsLoading ? 'Lade Status...' : 'Status laden'}
+          <button class="button secondary" type="button" onclick={() => void loadSettings()} disabled={settingsLoading || settingsRefreshing}>
+            {settingsLoading || settingsRefreshing ? 'Aktualisiere Status...' : 'Status jetzt aktualisieren'}
           </button>
         </section>
       </div>
@@ -2659,14 +2688,35 @@
         </div>
       </div>
 
-      <div class="method-list" aria-label="Methodische Kernschritte">
-        <span>Query Expansion</span>
-        <span>Candidate Retrieval</span>
-        <span>Metadatenbewertung</span>
-        <span>OCR und Extrakttext</span>
-        <span>Ranking mit Evidenz</span>
-        <span>Quellenkritische Prüfung</span>
-      </div>
+      <section class="method-model" aria-label="Forschungsmodell">
+        <div class="section-heading">
+          <span class="eyebrow">Forschungsmodell</span>
+          <h2>Vier Ebenen, die getrennt bleiben müssen</h2>
+          <p>Die Anwendung verbindet Hinweise, ersetzt aber keine quellenkritische Entscheidung.</p>
+        </div>
+        <div class="method-model-chain">
+          <article>
+            <span class="method-model-number">1</span>
+            <strong>Fragestellung</strong>
+            <p>Wer oder was wird gesucht? Namen, Orte, Zeit und bekannte Merkmale werden als Suchprofil festgehalten.</p>
+          </article>
+          <article>
+            <span class="method-model-number">2</span>
+            <strong>Archivische Spur</strong>
+            <p>Rollen, Kartenframes, Catalog-Metadaten und Textquellen liefern Kandidaten mit klarer Herkunft.</p>
+          </article>
+          <article>
+            <span class="method-model-number">3</span>
+            <strong>Evidenz</strong>
+            <p>Übereinstimmungen und Widersprüche werden nebeneinandergestellt: nicht nur Name, sondern auch Kontext.</p>
+          </article>
+          <article>
+            <span class="method-model-number">4</span>
+            <strong>Forschungsbefund</strong>
+            <p>Erst die Prüfung am Original macht aus einem Treffer einen belastbaren oder verworfenen Hinweis.</p>
+          </article>
+        </div>
+      </section>
 
       <section class="method-overview" aria-label="Methodischer Grundsatz">
         <div>
@@ -2674,13 +2724,13 @@
           <h2>Ähnlichkeit ist kein Identitätsnachweis</h2>
           <p>
             Ein Treffer wird nicht allein wegen eines ähnlichen Namens als gesichert behandelt. NARATrace kombiniert
-            Namen, Orte, Geburtsdaten, Mitgliedsnummern, Record Groups, NARA-Metadaten und verfügbare Textquellen.
+            Namen, Orte, Geburtsdaten, Mitgliedsnummern, Rollen, Frames, NARA-Metadaten und verfügbare Textquellen.
             Je mehr unabhängige Merkmale zusammenpassen, desto höher wird der Treffer eingeordnet.
           </p>
         </div>
         <div>
           <span class="eyebrow">Ausgabe</span>
-          <h2>Gerankte Hinweise statt endgültiger Urteilsspruch</h2>
+          <h2>Gerankte Hinweise statt endgültigem Urteil</h2>
           <p>
             Die Trefferliste zeigt Wahrscheinlichkeiten und Evidenzhinweise. Die eigentliche Entscheidung bleibt
             quellenkritische Forschungsarbeit: Originalseite öffnen, Transkript prüfen, Abweichungen dokumentieren
@@ -2692,7 +2742,7 @@
       <section class="workflow-section" aria-label="Workflow-Schema">
         <div class="section-heading">
           <span class="eyebrow">Workflow-Schema</span>
-          <h2>Von der Suchangabe zum prüfbaren Treffer</h2>
+          <h2>Vom Suchprofil zur Quellenprüfung</h2>
         </div>
         <ol class="workflow-schema">
           <li>
@@ -2703,33 +2753,33 @@
           </li>
           <li>
             <span class="workflow-step-number">2</span>
-            <strong>Abfragen ableiten</strong>
-            <p>Aus engen und breiteren Varianten entstehen NARA-Catalog-Abfragen, damit Schreibweisen und fragmentarische Angaben abgedeckt sind.</p>
-            <small>Output: Query-Varianten</small>
+            <strong>Korpus eingrenzen</strong>
+            <p>Namensvarianten und Nummern werden gegen den lokalen A3340-Frameindex geprüft; der Catalog bleibt Herkunfts- und Fallback-Quelle.</p>
+            <small>Output: nachvollziehbare Abrufstrategie</small>
           </li>
           <li>
             <span class="workflow-step-number">3</span>
-            <strong>Kandidaten laden</strong>
-            <p>Der Catalog liefert Datensätze und digitale Objekte. Lokale Seiten werden bevorzugt cachebar gemacht, wenn ein Bild darstellbar ist.</p>
-            <small>Output: Kandidaten und Originalseiten</small>
+            <strong>Kartenframes auswählen</strong>
+            <p>Konkrete Frames werden mit Rolle, Dateiname, Original-URL und extrahiertem Text als Kandidaten gesichert.</p>
+            <small>Output: Kandidaten mit Provenienz</small>
           </li>
           <li>
             <span class="workflow-step-number">4</span>
-            <strong>Textbasis bilden</strong>
-            <p>NARA Extracted Text, lokale OCR und Metadaten werden als überprüfbare Textquellen zusammengeführt.</p>
-            <small>Output: Transkript und Textursprung</small>
+            <strong>Textbasis prüfen</strong>
+            <p>NARA Extracted Text, lokale OCR und Metadaten bleiben als getrennte, überprüfbare Textquellen sichtbar.</p>
+            <small>Output: Transkript mit Textursprung</small>
           </li>
           <li>
             <span class="workflow-step-number">5</span>
-            <strong>Evidenz bewerten</strong>
-            <p>Übereinstimmungen und Widersprüche werden gewichtet: Name allein zählt weniger als mehrere unabhängige Treffermerkmale.</p>
+            <strong>Evidenz abwägen</strong>
+            <p>Übereinstimmungen und Widersprüche werden gewichtet: Name allein zählt weniger als mehrere unabhängige Merkmale.</p>
             <small>Output: Score und Evidenzliste</small>
           </li>
           <li>
             <span class="workflow-step-number">6</span>
-            <strong>Quellenprüfung</strong>
-            <p>Die gerankten Treffer werden im Original, im Transkript und im NARA-Datensatz nachvollziehbar geprüft.</p>
-            <small>Output: belastbarer Forschungsbefund</small>
+            <strong>Quellenkritisch entscheiden</strong>
+            <p>Die gerankten Treffer werden im Original, im Transkript und im NARA-Datensatz geprüft, bestätigt oder verworfen.</p>
+            <small>Output: dokumentierter Forschungsbefund</small>
           </li>
         </ol>
       </section>
