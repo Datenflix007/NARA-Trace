@@ -1,8 +1,8 @@
 # NARATrace Nutzeranleitung
 
-Diese Anleitung richtet sich an Nutzer, die NARATrace lokal mit einem eigenen NARA API-Schlüssel einsetzen wollen.
+NARATrace ist ein lokales Recherchewerkzeug. Treffer sind prüfbare Hinweise, keine automatisch gesicherten Identifizierungen.
 
-## 1. Lokale Installation
+## Installation und Schlüssel
 
 ```powershell
 python -m pip install -e .\backend[test]
@@ -10,93 +10,35 @@ cd frontend
 npm install
 npm run build
 cd ..
-python -m naratrace
-```
-
-Wenn Port `8765` belegt ist:
-
-```powershell
 python -m naratrace --port 8766
 ```
 
-Unter Windows kann alternativ `quickstart.bat` genutzt werden. Das Skript baut das Frontend und startet NARATrace auf Port `8766`.
+Hinterlege deinen persönlichen NARA-Catalog-API-Schlüssel unter **Einstellungen** und prüfe ihn dort. Er bleibt im Betriebssystem-Keyring, nie im Browser, in SQLite oder im Export. Das A3340 Open Dataset ist ein separater öffentlicher Datenweg; dafür ist kein Catalog-Key erforderlich.
 
-## 2. Eigenen NARA API-Schlüssel einrichten
+## Suche anlegen
 
-1. Öffne den Reiter `Einstellungen`.
-2. Trage deinen persönlichen NARA API-Schlüssel ein.
-3. Speichere den Schlüssel.
-4. Führe `Schlüssel testen` aus.
+1. Öffne **Neue Suche** und trage mindestens einen Nachnamen ein.
+2. Ergänze Vorname, Geburtsdatum/-jahr, bekannte Orte, Namensvarianten oder Mitgliedsnummer nur, wenn sie quellenbasiert sind.
+3. Starte den Suchjob und prüfe Status, Warnungen und gespeicherte Abfragen.
 
-Der Schlüssel wird lokal im Betriebssystem-Keyring gespeichert. Er wird nicht in Suchverläufe, Exporte, Screenshots, SQLite oder Frontend-Code geschrieben.
+Bei einer Personensuche prüft NARATrace zuerst den öffentlichen A3340-MFKL-Karteiindex. Ein A3340-Treffer öffnet immer den konkreten Kartenframe mit Originalbild, Transkript, Frame- und Rollenprovenienz - nie ein vollständiges Rollen-PDF mit hunderten oder tausenden Seiten. Nur wenn dort kein Kartenframe vorliegt, folgt der Catalog-Weg (mit API-Schlüssel).
 
-Für Entwicklung kann alternativ eine lokale Umgebungsvariable gesetzt werden:
+Fundstellen im Transkript werden anhand der Suchnamen, Varianten und einer eingegebenen Mitgliedsnummer markiert. Die Markierung macht den textlichen Hinweis sichtbar; sie ist kein Identitätsnachweis.
 
-```powershell
-$env:NARA_API_KEY="dein-schluessel"
-```
+## Treffer quellenkritisch prüfen
 
-## 3. Personensuche durchführen
+Prüfe nie nur den Score. Öffne die Detailansicht und vergleiche:
 
-1. Öffne `Neue Suche`.
-2. Trage mindestens einen Nachnamen ein.
-3. Ergänze unabhängige Merkmale: Vorname, Namensvarianten, Geburtsdaten, Wohnorte, Mitgliedsnummern, Record Group oder NAID.
-4. Starte den Suchjob.
-5. Beobachte Fortschritt, Suchlaufzeit, Restzeit und Status.
-6. Brich den Job ab, wenn die Anfrage falsch angelegt wurde oder zu breit läuft.
+- Originalseite beziehungsweise NARA-Catalog-Ansicht;
+- Transkript und eine eventuelle manuelle Korrektur;
+- NAID, Serie, Quelle und Abrufkontext;
+- bei A3340: MFKL/MFOK, Rolle, Frame, `objectFilename`, Original-URL und OCR-Herkunft;
+- positive wie negative Evidenzen.
 
-Je enger und unabhängiger die Angaben sind, desto besser kann NARATrace Kandidaten bewerten.
-Die maximale Kandidatenzahl kann bis 2000 gesetzt werden. NARATrace fragt dafür mehrere NARA-Ergebnisseiten ab; höhere Werte bedeuten entsprechend mehr API-Requests und längere Medien-/OCR-Verarbeitung.
+Ein hoher Name-Score ohne passende unabhängige Merkmale ist kein Identitätsnachweis. Unklare OCR, fehlende Bilder, Netzwerkfehler oder keine Kandidaten müssen als solche erkennbar bleiben.
 
-## 4. Treffer prüfen
+## Lokale Dokumente, Verläufe und Exporte
 
-Die Trefferliste ist eine Plausibilitätsrangfolge. Öffne Treffer in der Vollansicht und prüfe:
+**Lokale Dokumente** verarbeitet PDF-, Bild- und TIFF-Dateien auf dem lokalen Rechner. **Suchverläufe** öffnen, löschen oder exportieren vergangene Jobs. Die manuelle Transkriptkorrektur ist eine lokale Annotation; sie überschreibt weder das Original noch die dokumentierte NARA-Textquelle.
 
-- Originalseite oder NARA-Catalog-Vorschau
-- mehrere Medienseiten eines Treffers über `Zurück` und `Weiter`
-- Bildseiten über `+`, `-`, `Reset` und Ziehen mit der Maus im Anzeigefeld
-- MP4-Digitalobjekte direkt im Medienfeld
-- NAID und Titel
-- Record Group oder Serie
-- Trefferwahrscheinlichkeit
-- Evidenzliste
-- OCR beziehungsweise NARA Extracted Text
-- manuelle Transkriptkorrekturen
-
-Ein Treffer ist erst belastbar, wenn die Quelle selbst geprüft wurde.
-
-## 5. Suchverläufe nutzen
-
-Unter `Suchverläufe` werden abgeschlossene und abgebrochene Suchjobs lokal gespeichert. Dort kannst du:
-
-- frühere Suchläufe wieder öffnen
-- datierbare Treffer als Übersicht nach Jahrzehnten einordnen
-- Treffer nach Wahrscheinlichkeit prüfen
-- einzelne Treffer löschen
-- komplette Suchläufe löschen
-- den Suchlauf als Markdown-Recherchebericht exportieren
-
-Der Bericht enthält Suchprofil, gespeicherte Abfragen, Treffer, Evidenzen, Transkript und Grenzen der automatischen Identifizierung.
-
-## 6. Lokale Dokumente prüfen
-
-Der Reiter `Lokale Dokumente` ist für lokale PDF-, Bild- und TIFF-Dateien gedacht, die noch nicht aus einem NARA-Suchjob stammen.
-
-1. Datei auswählen.
-2. Prüfbegriffe eintragen.
-3. Dokument analysieren.
-4. Vorschau, OCR-Text und Fundstellen prüfen.
-
-Die Datei bleibt lokal im NARATrace-Datenverzeichnis.
-
-## 7. Grenzen
-
-NARATrace ersetzt keine quellenkritische Archivarbeit. Häufige Problemfälle:
-
-- OCR erkennt Namen oder Nummern falsch.
-- NARA-Metadaten sind unvollständig.
-- Gleichnamige Personen erzeugen plausible, aber falsche Treffer.
-- Digitalisate fehlen oder sind im Browser nicht direkt darstellbar.
-- Ein hoher Score ist kein Identitätsnachweis.
-
-Für wissenschaftliche Nutzung müssen Originaldatensatz, Rechtehinweise und Zitierweise direkt bei NARA geprüft werden.
+Weitere Hintergründe: [Suchmethodik](SEARCH-METHODOLOGY.md), [NARA-Architektur](NARA_Architekture.md) und [Programmarchitektur](TRAXER_Architekture.md).

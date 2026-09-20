@@ -41,8 +41,12 @@ from naratrace.processing.documents import (
     is_browser_display_url,
     is_browser_video_file,
     is_browser_video_url,
+    materialize_digital_object,
     materialize_relevant_pages,
 )
+from naratrace.nsdap.manifest import NsdapDataError
+from naratrace.nsdap.models import FrameMatch
+from naratrace.processing.nsdap_candidates import NsdapCandidate, retrieve_nsdap_candidates
 
 
 LOCAL_DEMO_PDF_PATH = Path.home() / "Downloads" / "SchulzeNaumburg_NSDAP_Kartei1931.pdf"
@@ -66,7 +70,7 @@ async def create_search_job(payload: SearchRequest) -> SearchJobResponse:
             mode="quick",
             title=title,
             progress_current=0,
-            progress_total=6,
+            progress_total=8,
             started_at=now,
             warnings=[],
         )
@@ -116,19 +120,46 @@ async def execute_search_job(job_id: str, payload: SearchRequest) -> None:
             return
 
         api_key, key_source = get_nara_api_key()
-        if not api_key:
-            job.status = "failed"
-            job.progress_current = 1
-            job.completed_at = datetime.now(timezone.utc)
-            job.error_message = "NARA API-Schlüssel fehlt."
-            job.warnings = [
-                "Bitte in den Einstellungen einen NARA API-Schlüssel speichern oder NARA_API_KEY als Umgebungsvariable setzen.",
-                "Ohne gültigen Schlüssel kann NARATrace keine echten NARA-Treffer abrufen.",
-            ]
-            session.flush()
-            return
+    if not update_job_state(job_id, "searching_a3340", 2):
+        return
+    try:
+        nsdap_candidates, nsdap_warnings = await retrieve_nsdap_candidates(payload)
+    except NsdapDataError as exc:
+        nsdap_candidates, nsdap_warnings = [], [str(exc)]
 
-    if not update_job_state(job_id, "searching_catalog", 2):
+    if nsdap_candidates:
+        if not update_job_state(job_id, "materializing_card_frames", 4):
+            return
+        stored_count, materialization_warnings = await store_nsdap_candidates(job_id, payload, nsdap_candidates)
+        if not update_job_state(job_id, "ranking", 7):
+            return
+        with session_scope() as session:
+            job = session.get(SearchJob, job_id)
+            if job is None or job.status == "cancelled":
+                return
+            job.status = "complete"
+            job.progress_current = 8
+            job.completed_at = datetime.now(timezone.utc)
+            job.warnings = nsdap_warnings + materialization_warnings
+            job.warnings.append("A3340-Ergebnisse verweisen auf einzelne Kartenframes, nicht auf ein Rollen-PDF.")
+            if stored_count == 0:
+                job.warnings.append("A3340-Frames wurden gefunden, konnten aber nicht als Kartenansicht gespeichert werden.")
+            session.flush()
+        return
+
+    if not api_key:
+        fail_search_job(
+            job_id,
+            "NARA API-Schlüssel fehlt.",
+            nsdap_warnings
+            + [
+                "Bitte in den Einstellungen einen NARA API-Schluessel speichern oder NARA_API_KEY setzen.",
+                "Ohne gültigen Schlüssel kann NARATrace keine echten NARA-Treffer abrufen.",
+            ],
+        )
+        return
+
+    if not update_job_state(job_id, "searching_catalog", 3):
         return
     try:
         nara_response = await run_nara_candidate_search(payload, api_key)
@@ -138,17 +169,17 @@ async def execute_search_job(job_id: str, payload: SearchRequest) -> None:
 
     if is_search_job_cancelled(job_id):
         return
-    if not update_job_state(job_id, "downloading_pages_ocr", 4):
+    if not update_job_state(job_id, "downloading_pages_ocr", 5):
         return
     stored_count, materialization_warnings = await store_nara_candidates(job_id, payload, nara_response)
-    if not update_job_state(job_id, "ranking", 5):
+    if not update_job_state(job_id, "ranking", 7):
         return
     with session_scope() as session:
         job = session.get(SearchJob, job_id)
         if job is None or job.status == "cancelled":
             return
         job.status = "complete"
-        job.progress_current = 6
+        job.progress_current = 8
         job.completed_at = datetime.now(timezone.utc)
         job.warnings = list(getattr(nara_response, "warnings", []))
         job.warnings.extend(materialization_warnings)
@@ -596,6 +627,125 @@ async def store_nara_candidates(job_id: str, payload: SearchRequest, nara_respon
                 return stored, warnings
             stored += store_nara_candidate(session, job, payload, item, materialized_pages)
     return stored, warnings
+
+
+async def store_nsdap_candidates(
+    job_id: str, payload: SearchRequest, candidates: list[NsdapCandidate]
+) -> tuple[int, list[str]]:
+    """Persist individual card frames as results; a roll PDF is never a result."""
+    stored = 0
+    warnings: list[str] = []
+    for candidate in candidates:
+        if is_search_job_cancelled(job_id):
+            return stored, warnings
+        frame = candidate.frame
+        frame_naid = frame.object_id or f"{candidate.roll.naid}-frame-{frame.frame_number}"
+        try:
+            materialized = await materialize_digital_object(
+                job_id,
+                frame_naid,
+                frame.frame_number - 1,
+                frame.raw,
+                extract_ocr=False,
+            )
+        except Exception as exc:
+            warnings.append(f"{candidate.roll.collection} {candidate.roll.box}, Frame {frame.frame_number}: {exc}")
+            continue
+        if materialized.warning:
+            warnings.append(f"{candidate.roll.collection} {candidate.roll.box}, Frame {frame.frame_number}: {materialized.warning}")
+        with session_scope() as session:
+            job = session.get(SearchJob, job_id)
+            if job is None or job.status == "cancelled":
+                return stored, warnings
+            stored += store_nsdap_candidate(session, job, payload, candidate, materialized)
+    return stored, warnings
+
+
+def store_nsdap_candidate(
+    session: Session,
+    job: SearchJob,
+    payload: SearchRequest,
+    candidate: NsdapCandidate,
+    materialized_page: MaterializedPage,
+) -> int:
+    frame = candidate.frame
+    roll = candidate.roll
+    frame_naid = frame.object_id or f"{roll.naid}-frame-{frame.frame_number}"
+    record = CandidateRecord(
+        job_id=job.id,
+        naid=frame_naid,
+        parent_naid=roll.naid,
+        title=f"{roll.collection} {roll.box} – Kartenframe {frame.frame_number}",
+        description=f"{roll.title}; {frame.object_filename or f'Frame {frame.frame_number}'}",
+        record_group="Record Group 242",
+        series="Records Relating to Membership in the NSDAP (A3340)",
+        local_identifier=f"{roll.collection}-{roll.box}-{frame.frame_number}",
+        original_url=f"https://catalog.archives.gov/id/{roll.naid}",
+        has_digital_objects=True,
+        text_origin="NARA A3340 Extracted Text",
+        retrieved_at=datetime.now(timezone.utc),
+        raw_metadata={
+            "source": "NARA A3340 Open Dataset",
+            "collection": roll.collection,
+            "roll": roll.box,
+            "roll_naid": roll.naid,
+            "roll_title": roll.title,
+            "frame": frame.frame_number,
+            "object_filename": frame.object_filename,
+            "object_url": frame.object_url,
+            "retrieval_strategy": candidate.frame_match.strategy,
+            "matched_variants": list(candidate.frame_match.matched_variants),
+            "highlight_terms": build_a3340_highlight_terms(payload, candidate.frame_match),
+        },
+    )
+    session.add(record)
+    session.flush()
+    page = add_materialized_page(session, record, materialized_page)
+    score = candidate.frame_match.retrieval_score
+    result = SearchResult(
+        job_id=job.id,
+        candidate_record_id=record.id,
+        match_score=score,
+        category=category_for_score(score),
+        suspected_person_name=build_job_title(payload),
+        relevant_pages_count=1,
+    )
+    session.add(result)
+    session.flush()
+    evidence_items = [
+        ("positive", "A3340-Rollenbereich", f"{roll.collection} {roll.box}: {roll.title}", 0.0, "NARA A3340 Manifest"),
+        ("positive", "Konkreter Kartenframe", frame.object_filename or f"Frame {frame.frame_number}", 0.0, "NARA A3340 Roll-JSON"),
+        ("uncertainty", "Retrieval Score ist kein Identitätsnachweis", candidate.frame_match.strategy, 0.0, "NARA-Trace"),
+    ]
+    if page and page.local_path:
+        evidence_items.append(("positive", "Kartenbild lokal für Browseransicht materialisiert", page.original_url, 0.0, "NARA Originalbild"))
+    for kind, label, detail, delta, source_type in evidence_items:
+        session.add(
+            MatchEvidence(
+                job_id=job.id,
+                candidate_record_id=record.id,
+                candidate_page_id=page.id if page else None,
+                result_id=result.id,
+                kind=kind,
+                label=label,
+                detail=detail,
+                score_delta=delta,
+                source_type=source_type,
+            )
+        )
+    return 1
+
+
+def build_a3340_highlight_terms(payload: SearchRequest, match: FrameMatch) -> list[str]:
+    """Expose searched identity terms to the transcript marker without asserting identity."""
+    values = [
+        *match.matched_variants,
+        payload.first_name or "",
+        payload.last_name or "",
+        payload.membership_number or "",
+        *(line.strip() for line in (payload.variants or "").splitlines()),
+    ]
+    return dedupe_query_terms(values)
 
 
 def store_nara_candidate(
@@ -1315,6 +1465,11 @@ def serialize_result(result: SearchResult) -> SearchResultResponse:
         transcript_edited=transcript_edited,
         media_pages=media_pages,
         record_years=extract_result_years(result),
+        highlight_terms=[
+            value
+            for value in record.raw_metadata.get("highlight_terms", [])
+            if isinstance(value, str) and value.strip()
+        ],
         evidences=[
             MatchEvidenceResponse(
                 kind=evidence.kind,

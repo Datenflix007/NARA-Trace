@@ -60,9 +60,14 @@ async def materialize_relevant_pages(job_id: str, naid: str, record: NaraRecord,
 
 
 async def materialize_digital_object(
-    job_id: str, naid: str, index: int, digital_object: dict[str, Any], is_relevant: bool = True
+    job_id: str,
+    naid: str,
+    index: int,
+    digital_object: dict[str, Any],
+    is_relevant: bool = True,
+    extract_ocr: bool = True,
 ) -> MaterializedPage:
-    image_url = extract_object_url(digital_object)
+    image_url = canonical_nara_media_url(extract_object_url(digital_object))
     nara_text = extract_digital_object_text(digital_object)
     local_path: str | None = None
     ocr_text: str | None = None
@@ -76,10 +81,11 @@ async def materialize_digital_object(
             downloaded = await download_digital_object(job_id, naid, index, image_url)
             local_image = ensure_display_image(downloaded)
             local_path = str(local_image)
-            ocr_source = downloaded if is_image_file(downloaded) else local_image
-            ocr_text = extract_local_ocr(ocr_source)
-            if ocr_text:
-                ocr_engine = "Tesseract"
+            if extract_ocr:
+                ocr_source = downloaded if is_image_file(downloaded) else local_image
+                ocr_text = extract_local_ocr(ocr_source)
+                if ocr_text:
+                    ocr_engine = "Tesseract"
         except Exception as exc:
             warning = f"Digitalobjekt {image_url} konnte nicht lokal geladen oder per OCR verarbeitet werden: {exc}"
 
@@ -201,6 +207,19 @@ def extract_object_url(digital_object: dict[str, Any]) -> str | None:
         if isinstance(value, str) and value.startswith(("http://", "https://")):
             return value
     return None
+
+
+def canonical_nara_media_url(url: str | None) -> str | None:
+    """Use NARA's public Catalog media endpoint when legacy S3 URLs deny access."""
+    if not url:
+        return None
+    parsed = urlparse(url)
+    marker = "/naraprodstorage/lz/"
+    marker_index = parsed.path.casefold().find(marker)
+    if marker_index >= 0:
+        suffix = parsed.path[marker_index + len(marker) :]
+        return f"https://catalog.archives.gov/medialz/{suffix}"
+    return url
 
 
 async def download_digital_object(job_id: str, naid: str, index: int, url: str) -> Path:

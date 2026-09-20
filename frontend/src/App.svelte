@@ -62,7 +62,13 @@
     transcriptEdited: boolean;
     mediaPages: DisplayMediaPage[];
     recordYears: number[];
+    highlightTerms?: string[];
     evidence: string[];
+  };
+
+  type TranscriptPart = {
+    text: string;
+    highlighted: boolean;
   };
 
   type DisplayMediaPage = {
@@ -464,6 +470,8 @@
     const labels: Record<string, string> = {
       queued: 'Suchlauf wird angelegt',
       preparing_search: 'Suchprofil, Varianten und Abfrage werden vorbereitet',
+      searching_a3340: 'A3340-Rollen und Kartenframes werden eingegrenzt',
+      materializing_card_frames: 'Konkrete Mitgliedskarten werden als Einzelbilder geladen',
       searching_catalog: 'NARA Catalog wird abgefragt',
       downloading_pages_ocr: 'Originalseiten werden geladen und OCR wird vorbereitet',
       ranking: 'Treffer werden bewertet und lokal gespeichert',
@@ -813,6 +821,7 @@
       transcriptEdited: Boolean(result.transcript_edited),
       mediaPages,
       recordYears: result.record_years ?? [],
+      highlightTerms: result.highlight_terms ?? [],
       evidence
     };
   }
@@ -1066,6 +1075,39 @@
       note,
       box: { x: 0, y: 0, width: 0, height: 0 }
     };
+  }
+
+  function transcriptParts(text: string, terms: string[] | undefined): TranscriptPart[] {
+    const usableTerms = (terms ?? []).map((term) => term.trim()).filter((term) => term.length >= 2);
+    if (!text || usableTerms.length === 0) return [{ text, highlighted: false }];
+    const matches: { start: number; end: number }[] = [];
+    for (const term of usableTerms) {
+      const digits = term.replace(/\D/g, '');
+      const pattern = digits.length >= 4
+        ? digits.split('').map((digit) => escapeRegExp(digit)).join('\\D*')
+        : escapeRegExp(term);
+      const matcher = new RegExp(pattern, 'giu');
+      let match = matcher.exec(text);
+      while (match) {
+        matches.push({ start: match.index, end: match.index + match[0].length });
+        match = matcher.exec(text);
+      }
+    }
+    matches.sort((left, right) => left.start - right.start || right.end - left.end);
+    const parts: TranscriptPart[] = [];
+    let cursor = 0;
+    for (const match of matches) {
+      if (match.start < cursor) continue;
+      if (match.start > cursor) parts.push({ text: text.slice(cursor, match.start), highlighted: false });
+      parts.push({ text: text.slice(match.start, match.end), highlighted: true });
+      cursor = match.end;
+    }
+    if (cursor < text.length) parts.push({ text: text.slice(cursor), highlighted: false });
+    return parts.length > 0 ? parts : [{ text, highlighted: false }];
+  }
+
+  function escapeRegExp(value: string) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   function transcriptDraftFor(result: DisplayResult) {
@@ -2360,6 +2402,20 @@
                 <span>manuell korrigiert</span>
               {/if}
             </div>
+            {#if detailResult.highlightTerms && detailResult.highlightTerms.length > 0}
+              <section class="transcript-marker" aria-label="Markierte Fundstellen">
+                <span class="eyebrow">Markierte Fundstellen</span>
+                <p>
+                  {#each transcriptParts(transcriptDraft, detailResult.highlightTerms) as part}
+                    {#if part.highlighted}
+                      <mark>{part.text}</mark>
+                    {:else}
+                      {part.text}
+                    {/if}
+                  {/each}
+                </p>
+              </section>
+            {/if}
             <label>
               Transkription
               <textarea class="transcript-editor" bind:value={transcriptDraft} rows="16"></textarea>

@@ -142,6 +142,7 @@ class SearchResultResponse(BaseModel):
     transcript_edited: bool = False
     media_pages: list[ResultMediaPageResponse] = Field(default_factory=list)
     record_years: list[int] = Field(default_factory=list)
+    highlight_terms: list[str] = Field(default_factory=list)
     evidences: list[MatchEvidenceResponse]
 
 

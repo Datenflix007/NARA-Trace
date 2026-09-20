@@ -1,0 +1,12 @@
+{
+  "person": {
+    "first_name": "Paul",
+    "last_name": "Schultze-Naumburg",
+    "birth_year": 1869
+  },
+  "expected": {
+    "status": "pending_source_verification",
+    "minimum_rank": 5
+  },
+  "notes": "Keine Produktions-Hartcodierung. Die externe Kartenreferenz wird erst nach reproduzierbarer Frame- und Originalbild-Prüfung als Goldstandard ergänzt."
+}

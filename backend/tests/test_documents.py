@@ -12,7 +12,7 @@ from naratrace.database.init import init_database
 from naratrace.database.models import CandidatePage, CandidateRecord, DigitalObject, SearchJob
 from naratrace.database.session import dispose_database, session_scope
 from naratrace.main import create_app
-from naratrace.processing.documents import ensure_display_image
+from naratrace.processing.documents import canonical_nara_media_url, ensure_display_image
 from naratrace.processing.jobs import build_source_page_url, get_candidate_page_image_path, get_candidate_page_media_path
 
 
@@ -37,6 +37,14 @@ def test_ensure_display_image_converts_tiff_to_browser_jpeg(tmp_path):
     with Image.open(display_path) as image:
         assert image.format == "JPEG"
         assert image.size == (48, 64)
+
+
+def test_canonical_nara_media_url_uses_public_catalog_endpoint_for_legacy_s3():
+    legacy_url = "https://s3.amazonaws.com/NARAprodstorage/lz/dc-metro/rg-242/A3340-MFKL-R0013-02947.tif"
+
+    assert canonical_nara_media_url(legacy_url) == (
+        "https://catalog.archives.gov/medialz/dc-metro/rg-242/A3340-MFKL-R0013-02947.tif"
+    )
 
 
 def test_candidate_page_image_path_converts_cached_tiff_for_existing_jobs(tmp_path, monkeypatch):

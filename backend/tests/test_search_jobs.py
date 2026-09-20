@@ -4,6 +4,7 @@ import asyncio
 
 import httpx
 import pytest
+from PIL import Image
 from sqlalchemy import select
 
 from naratrace.api.schemas import SearchRequest
@@ -13,8 +14,10 @@ from naratrace.database.models import SearchField, SearchVariant
 from naratrace.database.session import session_scope
 from naratrace.main import create_app
 from naratrace.nara.client import NaraRecord, NaraSearchItem, NaraSearchResponse
+from naratrace.nsdap.models import FrameMatch, NsdapFrame, NsdapRoll
 from naratrace.processing.documents import MaterializedPage
 from naratrace.processing.jobs import build_nara_query, run_nara_candidate_search
+from naratrace.processing.nsdap_candidates import NsdapCandidate
 
 
 def test_nara_query_rewrites_hyphenated_terms_for_boolean_search():
@@ -81,6 +84,10 @@ def isolate_nara_key(monkeypatch, tmp_path, api_key: str | None = None) -> None:
     else:
         monkeypatch.setenv("NARA_API_KEY", api_key)
     reset_settings_cache()
+    async def no_a3340_network(payload):
+        return [], ["A3340-Retrieval im Catalog-Regressionstest deaktiviert."]
+
+    monkeypatch.setattr("naratrace.processing.jobs.retrieve_nsdap_candidates", no_a3340_network)
 
 
 async def wait_for_terminal_job(client: httpx.AsyncClient, job_id: str) -> dict:
@@ -146,6 +153,83 @@ async def test_create_search_job_without_mock_does_not_invent_results(tmp_path, 
                 ).all()
                 variant_values = {variant.value for variant in number_variants}
                 assert {"347541", "347.541", "347 541", "Nr. 347541"}.issubset(variant_values)
+
+
+@pytest.mark.asyncio
+async def test_a3340_search_job_returns_one_concrete_card_frame_with_highlight_terms(tmp_path, monkeypatch):
+    monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("NARA_API_KEY", raising=False)
+    monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
+    reset_settings_cache()
+    reset_paths_cache()
+
+    roll = NsdapRoll(
+        naid="593492018",
+        collection="MFKL",
+        box="R0013",
+        title="Schultze, H - Schultze, Q",
+        s3_path="s3://nara-nsdap/A3340-MFKL/A3340-MFKL-R0013",
+        range_start="Schultze, H",
+        range_end="Schultze, Q",
+    )
+    frame = NsdapFrame(
+        roll=roll,
+        frame_number=2947,
+        object_id="593492947",
+        object_filename="A3340-MFKL-R0013-02947.tif",
+        object_url="https://catalog.archives.gov/medialz/dc-metro/rg-242/A3340-MFKL-R0013-02947.tif",
+        extracted_text="Mitgl. No. 347 541 Aufnahme: 1.11.30",
+        raw={
+            "objectId": "593492947",
+            "objectFilename": "A3340-MFKL-R0013-02947.tif",
+            "objectUrl": "https://catalog.archives.gov/medialz/dc-metro/rg-242/A3340-MFKL-R0013-02947.tif",
+            "extractedText": "Mitgl. No. 347 541 Aufnahme: 1.11.30",
+        },
+    )
+    card_path = tmp_path / "A3340-MFKL-R0013-02947.display.jpg"
+    Image.new("RGB", (48, 64), "white").save(card_path, format="JPEG")
+
+    async def fake_retrieve_nsdap_candidates(payload):
+        return [NsdapCandidate(roll, FrameMatch(frame, 100.0, (), "membership_number_exact"))], ["A3340-Retrieval: MFKL R0013"]
+
+    async def fake_materialize_digital_object(job_id, naid, index, digital_object, is_relevant=True, extract_ocr=True):
+        return MaterializedPage(
+            object_data=digital_object,
+            page_number=index + 1,
+            image_url=digital_object["objectUrl"],
+            local_path=str(card_path),
+            nara_text=digital_object["extractedText"],
+            ocr_text=None,
+            ocr_engine=None,
+        )
+
+    monkeypatch.setattr("naratrace.processing.jobs.retrieve_nsdap_candidates", fake_retrieve_nsdap_candidates)
+    monkeypatch.setattr("naratrace.processing.jobs.materialize_digital_object", fake_materialize_digital_object)
+
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            create_response = await client.post(
+                "/api/search",
+                json={"first_name": "Paul", "last_name": "Schultze-Naumburg", "membership_number": "347541"},
+            )
+            job = await wait_for_terminal_job(client, create_response.json()["id"])
+            assert job["status"] == "complete"
+            assert job["result_count"] == 1
+            assert "Rollen-PDF" in " ".join(job["warnings"])
+
+            results = (await client.get(f"/api/search/{job['id']}/results")).json()
+            assert len(results) == 1
+            assert results[0]["naid"] == "593492947"
+            assert results[0]["title"].endswith("Kartenframe 2947")
+            assert results[0]["source_page_url"].startswith("/api/pages/")
+            assert results[0]["transcript_text"] == "Mitgl. No. 347 541 Aufnahme: 1.11.30"
+            assert {"Paul", "Schultze-Naumburg", "347541"}.issubset(results[0]["highlight_terms"])
+
+            image_response = await client.get(results[0]["source_page_url"])
+            assert image_response.status_code == 200
+            assert image_response.headers["content-type"] == "image/jpeg"
 
 
 @pytest.mark.asyncio

@@ -159,6 +159,8 @@ Weitere Notizen:
 
 - [Nutzeranleitung](docs/USER-GUIDE.md)
 - [Suchmethodik](docs/SEARCH-METHODOLOGY.md)
+- [NARA- und A3340-Datenarchitektur](docs/NARA_Architekture.md)
+- [TRAXER-Programmarchitektur](docs/TRAXER_Architekture.md)
 - [NARA-Attribution](docs/NARA-ATTRIBUTION.md)
 
 ## Tests

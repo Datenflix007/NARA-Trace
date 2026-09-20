@@ -101,6 +101,7 @@ export type SearchResultResponse = {
   transcript_edited: boolean;
   media_pages?: ResultMediaPageResponse[];
   record_years?: number[];
+  highlight_terms?: string[];
   evidences: MatchEvidenceResponse[];
 };
 
