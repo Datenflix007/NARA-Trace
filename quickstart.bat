@@ -1,7 +1,11 @@
 @echo off
 setlocal
 
-cd /d "C:\Users\festa\Desktop\git_repos\datenflix007\NARA-Trace" || goto error
+rem Always start from the directory containing this file.  The project may be
+rem moved, so an absolute developer-specific path must not be used here.
+cd /d "%~dp0" || goto error
+if not exist "backend\naratrace\__main__.py" goto missing_project_files
+if not exist "frontend\package.json" goto missing_project_files
 set "PYTHONPATH=%CD%\backend"
 set "MODE=%~1"
 
@@ -27,6 +31,12 @@ if errorlevel 1 goto error
 endlocal
 exit /b 0
 
+:missing_project_files
+echo.
+echo [FEHLER] Die Projektdateien wurden neben quickstart.bat nicht gefunden.
+echo Bitte quickstart.bat im NARA-Trace-Ordner ausfuehren.
+goto error
+
 :index
 echo.
 echo A3340-Gesamtindex wird aufgebaut bzw. fortgesetzt...
@@ -42,7 +52,9 @@ exit /b 0
 call "%~f0" index
 if errorlevel 1 goto error
 call "%~f0"
-exit /b %ERRORLEVEL%
+set "QUICKSTART_ERROR=%ERRORLEVEL%"
+endlocal
+exit /b %QUICKSTART_ERROR%
 
 :usage
 echo.
@@ -54,9 +66,10 @@ endlocal
 exit /b 2
 
 :error
+set "QUICKSTART_ERROR=%ERRORLEVEL%"
 echo.
 echo [FEHLER] NARA-Trace konnte nicht gestartet werden.
-echo Fehlercode: %ERRORLEVEL%
+echo Fehlercode: %QUICKSTART_ERROR%
 pause
 endlocal
 exit /b 1

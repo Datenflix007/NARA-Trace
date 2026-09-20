@@ -127,6 +127,30 @@ Mit einem Befehl indizieren und starten:
 
 Der Index enthält die Roll-JSON-Texte aller MFKL-/MFOK-Rollen, aber keine Massenkopie der Kartenbilder.
 
+### A3340-Index per USB-Stick übertragen
+
+Der einmal aufgebaute A3340-Index kann auf einen anderen PC kopiert werden. Dafür genügt die Datei `nsdap-frames.sqlite3`; die zwischengespeicherten Roll-JSON-Dateien müssen nicht übertragen werden.
+
+Der Standardpfad ist **benutzerabhängig** und daher auf einem anderen PC nicht derselbe:
+
+```text
+%LOCALAPPDATA%\NARATrace\cache\nsdap\nsdap-frames.sqlite3
+```
+
+Auf dem Ziel-PC kopiere die Datei vom USB-Stick genau in den dortigen Standardpfad. Alternativ kann auf beiden PCs in der `.env` ein gemeinsamer Datenpfad festgelegt werden:
+
+```env
+NARATRACE_DATA_DIR=D:\NARATrace-Daten
+```
+
+Dann erwartet NARATrace den Index hier:
+
+```text
+D:\NARATrace-Daten\cache\nsdap\nsdap-frames.sqlite3
+```
+
+Die Anwendung vor dem Kopieren beenden. Der Index muss zur verwendeten NARATrace-Version passen; bei einem späteren Indexformat-Update baut NARATrace fehlende oder veraltete Daten erneut auf.
+
 ## API-Schlüssel
 
 Der NARA-API-Schlüssel wird lokal im Betriebssystem-Keyring gespeichert:
