@@ -127,6 +127,22 @@ Mit einem Befehl indizieren und starten:
 
 Der Index enthält die Roll-JSON-Texte aller MFKL-/MFOK-Rollen, aber keine Massenkopie der Kartenbilder.
 
+### Was beim ersten A3340-Durchlauf passiert
+
+Eine *Roll* ist eine digitalisierte Mikrofilmrolle und damit ein archivischer Container. NARATrace liest zu jeder Rolle die von NARA veröffentlichte JSON-Beschreibung, übernimmt den OCR-Text und die Fundstellen der einzelnen Kartenframes in einen lokalen Volltextindex und behält die Herkunft jedes Treffers bei. Die Kartenbilder selbst bleiben bei NARA und werden nur für konkrete Treffer abgerufen.
+
+```mermaid
+flowchart LR
+    A[NARA: A3340 Open Dataset] --> B[Manifest mit MFKL- und MFOK-Rollen]
+    B --> C[Roll-JSON je Mikrofilmrolle]
+    C --> D[Einzelne Kartenframes mit OCR und Provenienz]
+    D --> E[Lokaler SQLite-Volltextindex]
+    E --> F[Suche über den Gesamtbestand]
+    F --> G[Konkreten Frame im Original prüfen]
+```
+
+MFKL ist die alphabetisch geführte Zentralkartei und der zentrale Einstieg für Namensrecherchen. MFOK ist die Ortsgruppenkartei und kann einen unabhängigen lokalen bzw. geografischen Bezug liefern. Ein Suchtreffer ist stets ein Hinweis: Name, Frame, Rolle und Originalquelle müssen quellenkritisch geprüft werden. Die ausführliche historische und technische Einordnung steht in [docs/NARA_Architekture.md](docs/NARA_Architekture.md).
+
 ### A3340-Index per USB-Stick übertragen
 
 Der einmal aufgebaute A3340-Index kann auf einen anderen PC kopiert werden. Dafür genügt die Datei `nsdap-frames.sqlite3`; die zwischengespeicherten Roll-JSON-Dateien müssen nicht übertragen werden.

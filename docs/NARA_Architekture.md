@@ -11,7 +11,7 @@ Für die Personensuche sind zwei veröffentlichte Teile entscheidend:
 - **MFKL**, die Zentralkartei, ist die alphabetische Mitgliedskartei der zentralen NSDAP-Verwaltung. Sie ist der primäre Weg für Namensrecherche.
 - **MFOK**, die Ortsgruppenkartei, ist eine zentrale geographische Kartei. Sie kann ortsbezogene, unabhängige Evidenz liefern und wird getrennt bewertet.
 
-Eine Mikrofilmrolle (im Manifest `box`, etwa `R0014`) ist ein archivischer Container mit einem Namen- oder Ortsbereich. Diese Ordnung ist Suchwissen: ein Name wird zuerst gegen Bereichsgrenzen verglichen, bevor sein OCR-Text in einer kleinen Rollenauswahl gesucht wird. Eine blinde Suche über alle mehr als 14 Millionen Digitalobjekte wäre teurer, schwer nachvollziehbar und bei OCR-Fehlern besonders rauschbehaftet.
+Eine Mikrofilmrolle (im Manifest `box`, etwa `R0014`) ist ein archivischer Container mit einem Namen- oder Ortsbereich. Die Ordnung der Rollen bleibt wichtiges Kontextwissen: Sie erklärt, aus welchem Teilbestand ein Kartenframe stammt und macht einen Treffer überprüfbar. NARATrace baut für MFKL und MFOK dennoch einen lokalen Gesamtindex auf. Damit wird der OCR-Text korpusweit durchsucht, ohne die Rolle, den Frame oder die ursprüngliche Zuordnung zu verlieren.
 
 ```mermaid
 flowchart TD
@@ -32,6 +32,29 @@ flowchart TD
     META --> ROLL
 ```
 
+## Historische Einordnung und Quellenkritik
+
+Die hier erschlossenen Karteien sind keine nachträglich erstellten Forschungsdaten, sondern administrative Unterlagen der NSDAP und ihrer Gliederungen aus der Zeit des Nationalsozialismus. Sie wurden nach 1945 in alliierte Obhut genommen. Das Berlin Document Center wurde 1945 eingerichtet, um die übernommenen deutschen Unterlagen für Verfahren zu Kriegsverbrechen und Entnazifizierung zusammenzuführen; die biografischen Bestände umfassten NSDAP-Mitgliedschafts- und Personalunterlagen. NARA bewahrt für große Teile dieses Kontextes Mikrofilmüberlieferungen in Record Group 242. [NARA zur Geschichte von RG 242](https://www.archives.gov/research/guide-fed-records/groups/242.html)
+
+Diese Überlieferungskette ist für die Interpretation wesentlich:
+
+```mermaid
+flowchart LR
+    A[NSDAP-Verwaltung\nErstellung der Karteikarten] --> B[Überlieferung und Auswahl\nim Verwaltungshandeln]
+    B --> C[Alliierte Übernahme 1945\nBerlin Document Center]
+    C --> D[Mikroverfilmung und\narchivische Erschließung]
+    D --> E[NARA A3340\nRolle und Kartenframe]
+    E --> F[Digitalisat und NARA-OCR]
+    F --> G[NARATrace-Volltextindex\nals Recherchezugang]
+    G --> H[Prüfung am Originalframe\nund im Archivkontext]
+```
+
+Die Karteien sind deshalb weder vollständig noch neutral. Ein Eintrag kann Verwaltungsinformationen, Namensformen und weitere Angaben überliefern; er ersetzt jedoch keinen belastbaren Nachweis einer eindeutig identifizierten Person, einer Mitgliedschaft zu einem bestimmten Zeitpunkt oder einer individuellen Handlung. Namensgleichheiten, Schreibvarianten, Lücken der Überlieferung und Fehler der maschinellen Texterkennung sind ausdrücklich mitzudenken. Negative Suchergebnisse beweisen ebenfalls nicht das Fehlen einer Person oder Information im historischen Bestand.
+
+Für eine zitierfähige Recherche müssen mindestens Serie, Rolle, Frame, NAID, Original-URL und Abrufdatum festgehalten werden. NARATrace bewahrt diese Provenienz am Treffer und trennt sie von der automatischen Ähnlichkeitsbewertung. Das Originalbild und sein archivischer Zusammenhang haben gegenüber OCR und Ranking immer Vorrang.
+
+Die offizielle NARA-Übersicht nennt für A3340 die Reihen MFKL (Zentralkartei) und MFOK (Ortsgruppenkartei) als getrennte Mikrofilmserien. [NARA: Microfilmed Records Received from the Berlin Document Center](https://www.archives.gov/research/captured-german-records/berlin-document-center.html)
+
 ## Technische Struktur des Open Dataset
 
 NARA veröffentlicht das Dataset im öffentlichen S3-Bucket `nara-nsdap` und beschreibt den Zugriff im offiziellen Repository [`usnationalarchives/nsdap`](https://github.com/usnationalarchives/nsdap). Das offizielle Manifest `docs/nsdap.json` enthält pro Rolle die Felder: `id` (NAID), `agency` (MFKL/MFOK), `box`, `title` und `s3`.
@@ -46,6 +69,28 @@ docs/nsdap.json
 ```
 
 Ein Roll-JSON spiegelt einen Catalog-Datensatz: `record.naId` bezeichnet die Rolle, `record.digitalObjects` ihre Frames. `objectFilename` verknüpft OCR und Bild, `extractedText` ist die von NARA bereitgestellte Textract-OCR. Das Originalbild bleibt maßgeblich; OCR ist ein Such- und Prüfhinweis.
+
+## Pipeline des lokalen Gesamtindex
+
+Die folgende Darstellung zeigt den technischen Ablauf des Erstaufbaus und einer späteren Suche. Der zeitaufwändige Netz- und Indexierungsschritt fällt nur für noch fehlende Rollen an; bereits vollständig gespeicherte Rollen werden beim Fortsetzen übersprungen.
+
+```mermaid
+flowchart TD
+    A[Start: Index aufbauen oder fortsetzen] --> B[Offizielles A3340-Manifest laden]
+    B --> C{MFKL oder MFOK?}
+    C -- nein --> D[Für diesen Index auslassen]
+    C -- ja --> E{Rolle lokal vollständig indexiert?}
+    E -- ja --> F[Überspringen]
+    E -- nein --> G[Roll-JSON von NARA laden]
+    G --> H[Frames, OCR-Text und Provenienz auslesen]
+    H --> I[In SQLite FTS5 schreiben]
+    I --> J[Rollstatus lokal speichern]
+    F --> K[Gesamtindex]
+    J --> K
+    K --> L[Name oder Mitgliedsnummer suchen]
+    L --> M[Passende Kartenframes]
+    M --> N[Einzelnes Originalbild bei NARA prüfen]
+```
 
 Beispiel einer aktuell geprüften Manifestbeobachtung: `MFKL R0014` hat NAID `593495034`, Titel `Schultze, Paul - Schultze, Robert` und einen S3-Pfad unter `A3340-MFKL/A3340-MFKL-R0014`. Das ist kein Produktions-Sonderfall, sondern ein normales Ergebnis der Bereichsauswahl.
 
