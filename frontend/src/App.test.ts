@@ -298,8 +298,10 @@ describe('App', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Suchjob anlegen' }));
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Suchjob gespeichert' })).toBeTruthy();
+      expect(screen.getByRole('heading', { name: 'Suchverläufe' })).toBeTruthy();
     });
+    expect(screen.getByText(/Suchlauf für "Paul Schultze-Naumburg" ist abgeschlossen/)).toBeTruthy();
+    expect(screen.getByText('Ausgewählter Suchlauf')).toBeTruthy();
 
     const searchCall = fetchMock.mock.calls.find(([url, init]) => String(url) === '/api/search' && init?.method === 'POST');
     expect(searchCall?.[1]?.body).toEqual(expect.stringContaining('membership_number'));
@@ -770,7 +772,7 @@ describe('App', () => {
     expect(screen.getByText('Treffer nach Jahrzehnt')).toBeTruthy();
     expect(screen.getByText('1920er')).toBeTruthy();
     expect(screen.getByText('1930er')).toBeTruthy();
-    expect(screen.getByText('Nach Trefferwahrscheinlichkeit')).toBeTruthy();
+    expect(screen.getByText('Nach Rangstärke')).toBeTruthy();
     expect(screen.queryByText('Die Treffer konnten nicht geladen werden.')).toBeNull();
 
     const high = screen.getAllByText('Hoher Treffer')[0];
@@ -778,7 +780,7 @@ describe('App', () => {
     expect(Boolean(high.compareDocumentPosition(low) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 
-  it('exportiert einen Suchverlauf als Markdown-Recherchebericht', async () => {
+  it('exportiert einen Suchverlauf standardmaessig als PDF-Recherchebericht', async () => {
     const createObjectURL = vi.fn(() => 'blob:naratrace-report');
     const revokeObjectURL = vi.fn();
     Object.defineProperty(window.URL, 'createObjectURL', { value: createObjectURL, configurable: true });
@@ -805,7 +807,16 @@ describe('App', () => {
           headers: { 'Content-Type': 'application/json' }
         });
       }
-      if (url === '/api/search/job-1/export.md') {
+      if (url === '/api/search/job-1/export?format=pdf') {
+        return new Response('%PDF-NARATrace Recherchebericht', {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': 'attachment; filename="naratrace-recherchebericht.pdf"'
+          }
+        });
+      }
+      if (url === '/api/search/job-1/export?format=markdown') {
         return new Response('# NARATrace Recherchebericht', {
           status: 200,
           headers: {
@@ -827,16 +838,26 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByText('Exportierbarer Treffer')).toBeTruthy();
     });
-    await fireEvent.click(screen.getByRole('button', { name: 'Recherchebericht exportieren' }));
+    expect((screen.getByRole('combobox', { name: 'Exportformat' }) as HTMLSelectElement).value).toBe('pdf');
+    await fireEvent.click(screen.getByRole('button', { name: 'Als PDF exportieren' }));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith('/api/search/job-1/export.md');
+      expect(fetchMock).toHaveBeenCalledWith('/api/search/job-1/export?format=pdf');
     });
     await waitFor(() => {
       expect(createObjectURL).toHaveBeenCalled();
     });
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:naratrace-report');
-    expect(screen.getByText('Recherchebericht wurde erzeugt.')).toBeTruthy();
+    expect(screen.getByText('Recherchebericht als PDF wurde erzeugt.')).toBeTruthy();
+
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Exportformat' }), { target: { value: 'markdown' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Als Markdown exportieren' }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/search/job-1/export?format=markdown');
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Recherchebericht als Markdown wurde erzeugt.')).toBeTruthy();
+    });
   });
 
   it('zeigt Suchlaufvorschau und blättert Bild- und MP4-Seiten im Viewer', async () => {
@@ -1128,13 +1149,15 @@ describe('App', () => {
         return {
           ok: true,
           json: async () => [
-            { term: 'Paul', occurrence: 1, x: 25, y: 31, width: 8, height: 3 },
-            { term: '347541', occurrence: 1, x: 32, y: 38, width: 11, height: 3 }
+            { term: 'Paul', occurrence: 1, x: 25, y: 31, width: 8, height: 3 }
           ]
         } as Response;
       }
       if (url.startsWith('/api/pages/43/highlights?')) {
-        return { ok: true, json: async () => [] } as Response;
+        return {
+          ok: true,
+          json: async () => [{ term: '347541', occurrence: 1, x: 32, y: 38, width: 11, height: 3 }]
+        } as Response;
       }
       return new Response('{}', { status: 404 });
     });
@@ -1150,6 +1173,9 @@ describe('App', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/pages/42/highlights?terms=Paul&terms=347541'));
     expect(screen.getByLabelText('Kartenansichten')).toBeTruthy();
     expect(screen.getByRole('button', { name: /Vorderseite.*2947/ })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Kartenpaar' }));
+    expect(screen.getByLabelText('Vorder- und Rückseite nebeneinander')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Rohansicht' }));
     await fireEvent.click(screen.getByRole('button', { name: /Rückseite.*2948/ }));
     expect(screen.getByRole('heading', { name: 'A3340 MFKL R0013 - card frame 2948' })).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: /Vorderseite.*2947/ }));
@@ -1163,8 +1189,9 @@ describe('App', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/pages/42/highlights?terms=Paul&terms=347541');
 
     const metadataControl = screen.getByRole('button', { name: /Mitgliedsnummer.*347541/ });
-    const membershipHotspot = screen.getByRole('button', { name: 'Treffer 347541' });
     await fireEvent.mouseEnter(metadataControl);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'A3340 MFKL R0013 - card frame 2948' })).toBeTruthy());
+    const membershipHotspot = screen.getByRole('button', { name: 'Treffer 347541' });
     expect(membershipHotspot.classList.contains('active')).toBe(true);
   });
 });

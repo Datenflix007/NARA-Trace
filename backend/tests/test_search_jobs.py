@@ -342,7 +342,7 @@ async def test_create_search_job_with_demo_mode_returns_mock_results_without_api
 
 
 @pytest.mark.asyncio
-async def test_search_job_export_returns_research_markdown(tmp_path, monkeypatch):
+async def test_search_job_export_supports_pdf_html_and_markdown(tmp_path, monkeypatch):
     monkeypatch.setenv("NARATRACE_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("NARA_API_KEY", raising=False)
     monkeypatch.delenv("NARATRACE_MOCK_MODE", raising=False)
@@ -364,17 +364,31 @@ async def test_search_job_export_returns_research_markdown(tmp_path, monkeypatch
             )
             job = await wait_for_terminal_job(client, create_response.json()["id"])
 
-            export_response = await client.get(f"/api/search/{job['id']}/export.md")
+            pdf_response = await client.get(f"/api/search/{job['id']}/export")
+            html_response = await client.get(f"/api/search/{job['id']}/export?format=html")
+            markdown_response = await client.get(f"/api/search/{job['id']}/export?format=markdown")
+            legacy_markdown_response = await client.get(f"/api/search/{job['id']}/export.md")
 
-            assert export_response.status_code == 200
-            assert export_response.headers["content-type"].startswith("text/markdown")
-            assert "attachment;" in export_response.headers["content-disposition"]
-            report = export_response.text
-            assert "# NARATrace Recherchebericht: Paul Schultze-Naumburg" in report
-            assert "## Suchprofil" in report
-            assert "## Treffer" in report
-            assert "LOCAL-PDF-SCHULTZE-NAUMBURG-1931" in report
-            assert "NARATrace ist ein unabhängiges, inoffizielles Forschungswerkzeug" in report
+            assert pdf_response.status_code == 200
+            assert pdf_response.headers["content-type"].startswith("application/pdf")
+            assert pdf_response.content.startswith(b"%PDF")
+            assert 'filename="naratrace-recherchebericht-Paul-Schultze-Naumburg.pdf"' in pdf_response.headers["content-disposition"]
+
+            assert html_response.status_code == 200
+            assert html_response.headers["content-type"].startswith("text/html")
+            assert '<html lang="de">' in html_response.text
+            assert "LOCAL-PDF-SCHULTZE-NAUMBURG-1931" in html_response.text
+
+            for export_response in (markdown_response, legacy_markdown_response):
+                assert export_response.status_code == 200
+                assert export_response.headers["content-type"].startswith("text/markdown")
+                assert "attachment;" in export_response.headers["content-disposition"]
+                report = export_response.text
+                assert "# NARATrace Recherchebericht: Paul Schultze-Naumburg" in report
+                assert "## Suchprofil" in report
+                assert "## Treffer" in report
+                assert "LOCAL-PDF-SCHULTZE-NAUMBURG-1931" in report
+                assert "NARATrace ist ein unabhängiges, inoffizielles Forschungswerkzeug" in report
 
 
 @pytest.mark.asyncio

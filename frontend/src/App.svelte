@@ -25,6 +25,7 @@
     type PageHitRegionResponse,
     type ResultMediaPageResponse,
     type SearchJobResponse,
+    type SearchReportFormat,
     type SearchResultResponse,
     type SettingsResponse
   } from './lib/api';
@@ -90,6 +91,8 @@
     transcriptSource: string | null;
     transcriptEdited: boolean;
   };
+
+  type CardDisplayMode = 'single' | 'spread';
 
   type ImageHitRegion = PageHitRegionResponse;
 
@@ -278,6 +281,7 @@
   let exportingJobId = '';
   let exportNotice = '';
   let exportError = '';
+  let reportFormat: SearchReportFormat = 'pdf';
   let localDocumentFile: File | null = null;
   let localDocumentTerms = '';
   let localDocumentResult: LocalDocumentResponse | null = null;
@@ -308,6 +312,7 @@
   let transcriptNotices: Record<string, string> = {};
   let transcriptErrors: Record<string, string> = {};
   let selectedMediaIndexes: Record<string, number> = {};
+  let cardDisplayModes: Record<string, CardDisplayMode> = {};
   let mediaZoomLevels: Record<string, number> = {};
   let mediaPanOffsets: Record<string, { x: number; y: number }> = {};
   let draggingMedia:
@@ -320,6 +325,7 @@
         originY: number;
       }
     | null = null;
+  let hoverRequest = 0;
 
   $: focusedLineId = hoveredLineId || pinnedLineId;
   $: currentSearchProgressPercent = searchProgressPercent(currentJob);
@@ -394,7 +400,7 @@
   }
 
   function scoreLabel(score: number) {
-    return `${Math.round(score)} %`;
+    return `${Math.round(score)} / 100`;
   }
 
   function clampSearchCandidates(value: number) {
@@ -653,7 +659,7 @@
     exportNotice = '';
     exportError = '';
     try {
-      const report = await downloadSearchReport(job.id);
+      const report = await downloadSearchReport(job.id, reportFormat);
       const url = URL.createObjectURL(report.blob);
       const link = document.createElement('a');
       link.href = url;
@@ -662,7 +668,7 @@
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      exportNotice = 'Recherchebericht wurde erzeugt.';
+      exportNotice = `Recherchebericht als ${reportFormat === 'markdown' ? 'Markdown' : reportFormat.toUpperCase()} wurde erzeugt.`;
     } catch (error) {
       exportError = error instanceof Error ? error.message : 'Der Recherchebericht konnte nicht erstellt werden.';
     } finally {
@@ -936,6 +942,19 @@
     return currentMediaPage(result)?.label ?? result.sourcePageLabel;
   }
 
+  function cardDisplayMode(result: DisplayResult): CardDisplayMode {
+    return cardDisplayModes[result.key] ?? 'single';
+  }
+
+  function setCardDisplayMode(result: DisplayResult, mode: CardDisplayMode) {
+    cardDisplayModes = { ...cardDisplayModes, [result.key]: mode };
+    refreshMediaViewer(result);
+  }
+
+  function readableCardPages(result: DisplayResult) {
+    return result.mediaPages.filter((page) => page.mediaType === 'image' && page.mediaUrl).slice(0, 2);
+  }
+
   function isA3340CardSequence(result: DisplayResult) {
     return /a3340|mitgliedskartei|membership/i.test(`${result.title} ${result.series}`) && result.mediaPages.length > 1;
   }
@@ -1129,12 +1148,23 @@
     return page ? Boolean(requests[imageHitKey(result, page)]) : false;
   }
 
-  async function loadCurrentImageHitRegions(result: DisplayResult) {
-    const page = currentMediaPage(result);
-    if (!page || page.mediaType !== 'image' || page.pageId === null || result.lines.length > 0) {
+  function imageHitSearchTerms(result: DisplayResult) {
+    const seen = new Set<string>();
+    return [...(result.highlightTerms ?? []), ...(result.matchedFields ?? []).map((field) => field.term)]
+      .map((term) => term.trim())
+      .filter((term) => {
+        const key = term.toLocaleLowerCase('de-DE');
+        if (term.length < 2 || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
+
+  async function loadImageHitRegionsForPage(result: DisplayResult, page: DisplayMediaPage) {
+    if (page.mediaType !== 'image' || page.pageId === null || result.lines.length > 0) {
       return;
     }
-    const terms = (result.highlightTerms ?? []).map((term) => term.trim()).filter((term) => term.length >= 2);
+    const terms = imageHitSearchTerms(result);
     if (terms.length === 0) return;
 
     const key = imageHitKey(result, page);
@@ -1148,6 +1178,13 @@
       imageHitRegions = { ...imageHitRegions, [key]: [] };
     } finally {
       imageHitRequests = { ...imageHitRequests, [key]: false };
+    }
+  }
+
+  async function loadCurrentImageHitRegions(result: DisplayResult) {
+    const page = currentMediaPage(result);
+    if (page) {
+      await loadImageHitRegionsForPage(result, page);
     }
   }
 
@@ -1291,11 +1328,40 @@
   }
 
   function clearHoveredLine() {
+    hoverRequest += 1;
     hoveredLineId = '';
   }
 
   function togglePinnedLine(lineId: string) {
     pinnedLineId = pinnedLineId === lineId ? '' : lineId;
+  }
+
+  async function activateMatchedField(result: DisplayResult, field: MatchedFieldResponse, mode: 'hover' | 'pin') {
+    const fallbackLineId = `matched-field:${result.key}:${field.term}`;
+    const requestId = mode === 'hover' ? ++hoverRequest : hoverRequest;
+    if (mode === 'hover') {
+      hoveredLineId = fallbackLineId;
+    } else {
+      pinnedLineId = fallbackLineId;
+    }
+
+    for (let index = 0; index < result.mediaPages.length; index += 1) {
+      const page = result.mediaPages[index];
+      await loadImageHitRegionsForPage(result, page);
+      if (mode === 'hover' && requestId !== hoverRequest) return;
+      const hasFieldHit = imageHitRegionsFor(result, page).some(
+        (region) => region.term.toLocaleLowerCase('de-DE') === field.term.toLocaleLowerCase('de-DE')
+      );
+      if (!hasFieldHit) continue;
+      setMediaPage(result, index);
+      const lineId = imageHitLineId(page, field.term);
+      if (mode === 'hover') {
+        hoveredLineId = lineId;
+      } else {
+        pinnedLineId = lineId;
+      }
+      return;
+    }
   }
 
   async function checkBackend() {
@@ -1364,6 +1430,13 @@
         searchNotice = `Suchjob für "${name}" wurde lokal gespeichert. Status: ${currentJob?.status ?? startedJob.status}.`;
       }
       await loadHistory();
+      if (currentJob?.status === 'complete') {
+        selectedHistoryJob = currentJob;
+        selectedHistoryResults = currentResults;
+        historyHint = `Suchlauf für "${name}" ist abgeschlossen. Prüfe die Rangfolge und die Originalkarten.`;
+        activeRoute = 'history';
+        window.location.hash = 'history';
+      }
     } catch (error) {
       searchError = error instanceof Error ? error.message : 'Der Suchjob konnte nicht angelegt werden.';
     } finally {
@@ -1917,13 +1990,21 @@
             </div>
           {/if}
           <div class="actions report-actions">
+            <label class="report-format">
+              <span>Exportformat</span>
+              <select bind:value={reportFormat} aria-label="Exportformat">
+                <option value="pdf">PDF (Standard)</option>
+                <option value="html">HTML</option>
+                <option value="markdown">Markdown</option>
+              </select>
+            </label>
             <button
               class="button secondary"
               type="button"
               onclick={() => downloadResearchReport(currentJob)}
               disabled={exportingJobId === currentJob.id}
             >
-              {exportingJobId === currentJob.id ? 'Erzeuge Bericht...' : 'Recherchebericht exportieren'}
+              {exportingJobId === currentJob.id ? 'Erzeuge Bericht...' : `Als ${reportFormat === 'markdown' ? 'Markdown' : reportFormat.toUpperCase()} exportieren`}
             </button>
           </div>
         </section>
@@ -1961,7 +2042,7 @@
           {/if}
           <div class="section-heading">
             <span class="eyebrow">Treffer</span>
-            <h2>Nach Trefferwahrscheinlichkeit</h2>
+            <h2>Nach Rangstärke</h2>
           </div>
           <div class="result-card-list">
             {#each currentResults as result}
@@ -1973,7 +2054,7 @@
                     <span class="score-pill">{scoreLabel(result.matchScore)}</span>
                     </div>
                     <h3>{result.name}</h3>
-                    <p>{result.category} · Trefferwahrscheinlichkeit {scoreLabel(result.matchScore)} · {result.naid}</p>
+                    <p>{result.category} · Rangstärke {scoreLabel(result.matchScore)} · {result.naid}</p>
                   </div>
                   <button class="button secondary" type="button" onclick={() => openResultDetail(result, 'search')}>
                     Vollansicht öffnen
@@ -2123,7 +2204,7 @@
                     {#if (result.matchedFields ?? []).length > 0}
                       <section class="matched-fields" aria-label="Gesuchte und gefundene Metadaten">
                         <span class="eyebrow">Gesucht und gefunden</span>
-                        <p>Hover über einen Eintrag markiert die OCR-Fundstelle in der aktuell gewählten Kartenansicht.</p>
+                        <p>Hover über einen Eintrag sucht die passende Kartenansicht und markiert die OCR-Fundstelle gelb über dem Bild.</p>
                         <div class="transcript-lines">
                           {#each result.matchedFields ?? [] as field}
                             {@const fieldLineId = matchedFieldLineId(result, field)}
@@ -2131,11 +2212,11 @@
                               class="transcript-line image-hit-line"
                               class:active={focusedLineId === fieldLineId}
                               type="button"
-                              onmouseenter={() => setHoveredLine(fieldLineId)}
+                              onmouseenter={() => void activateMatchedField(result, field, 'hover')}
                               onmouseleave={clearHoveredLine}
-                              onfocus={() => setHoveredLine(fieldLineId)}
+                              onfocus={() => void activateMatchedField(result, field, 'hover')}
                               onblur={clearHoveredLine}
-                              onclick={() => togglePinnedLine(fieldLineId)}
+                              onclick={() => void activateMatchedField(result, field, 'pin')}
                             >
                               <span>{field.label}</span>
                               <strong>{field.value}</strong>
@@ -2329,13 +2410,21 @@
                 </span>
               </div>
               <div class="actions report-actions">
+                <label class="report-format">
+                  <span>Exportformat</span>
+                  <select bind:value={reportFormat} aria-label="Exportformat">
+                    <option value="pdf">PDF (Standard)</option>
+                    <option value="html">HTML</option>
+                    <option value="markdown">Markdown</option>
+                  </select>
+                </label>
                 <button
                   class="button secondary"
                   type="button"
                   onclick={() => downloadResearchReport(selectedHistoryJob)}
                   disabled={exportingJobId === selectedHistoryJob.id}
                 >
-                  {exportingJobId === selectedHistoryJob.id ? 'Erzeuge Bericht...' : 'Recherchebericht exportieren'}
+                  {exportingJobId === selectedHistoryJob.id ? 'Erzeuge Bericht...' : `Als ${reportFormat === 'markdown' ? 'Markdown' : reportFormat.toUpperCase()} exportieren`}
                 </button>
               </div>
             </div>
@@ -2379,7 +2468,7 @@
               {/if}
               <div class="section-heading history-results-heading">
                 <span class="eyebrow">Trefferliste</span>
-                <h2>Nach Trefferwahrscheinlichkeit</h2>
+                <h2>Nach Rangstärke</h2>
               </div>
               <div class="ranked-list history-ranked-list">
                 {#each selectedHistoryResults as result}
@@ -2452,7 +2541,7 @@
         <div>
           <span class={`source-badge ${sourceBadgeClass(detailResult.dataSource)}`}>{detailResult.dataSource}</span>
           <h1>{detailResult.name}</h1>
-          <p>{detailResult.category} · Trefferwahrscheinlichkeit {scoreLabel(detailResult.matchScore)} · {detailResult.naid}</p>
+          <p>{detailResult.category} · Rangstärke {scoreLabel(detailResult.matchScore)} · {detailResult.naid}</p>
         </div>
       </div>
 
@@ -2473,6 +2562,24 @@
                   <span>{cardViewLabel(selectedDetailResult, currentMediaIndex(selectedDetailResult))} · {currentMediaIndex(selectedDetailResult) + 1} / {detailResult.mediaPages.length}</span>
                   <button class="button secondary compact-button" type="button" onclick={() => nextMediaPage(selectedDetailResult)} disabled={currentMediaIndex(selectedDetailResult) >= detailResult.mediaPages.length - 1}>
                     Weiter
+                  </button>
+                {/if}
+                {#if isA3340CardSequence(detailResult)}
+                  <button
+                    class="button secondary compact-button"
+                    class:active={cardDisplayMode(detailResult) === 'single'}
+                    type="button"
+                    onclick={() => setCardDisplayMode(selectedDetailResult, 'single')}
+                  >
+                    Rohansicht
+                  </button>
+                  <button
+                    class="button secondary compact-button"
+                    class:active={cardDisplayMode(detailResult) === 'spread'}
+                    type="button"
+                    onclick={() => setCardDisplayMode(selectedDetailResult, 'spread')}
+                  >
+                    Kartenpaar
                   </button>
                 {/if}
                 {#if mediaPage.mediaType === 'image' && mediaPage.mediaUrl}
@@ -2502,7 +2609,28 @@
                 </div>
               </div>
             {/if}
-            {#if mediaPage?.mediaUrl && mediaPage.mediaType === 'image'}
+            {#if cardDisplayMode(detailResult) === 'spread' && readableCardPages(detailResult).length > 1}
+              <section class="card-spread" aria-label="Vorder- und Rückseite nebeneinander">
+                <p class="card-spread-note">Browserfähige Lesefläche: Vorder- und Rückseite derselben Karte nebeneinander. Wähle eine Seite für die Rohansicht mit OCR-Markierungen.</p>
+                <div class="card-spread-pages">
+                  {#each readableCardPages(detailResult) as page, index}
+                    <button
+                      class="card-spread-page"
+                      type="button"
+                      onclick={() => {
+                        const pageIndex = selectedDetailResult.mediaPages.indexOf(page);
+                        setMediaPage(selectedDetailResult, pageIndex);
+                        setCardDisplayMode(selectedDetailResult, 'single');
+                      }}
+                      aria-label={`${cardViewLabel(detailResult, index)} in Rohansicht öffnen`}
+                    >
+                      <span>{cardViewLabel(detailResult, index)} · Frame {page.pageNumber}</span>
+                      <img src={page.mediaUrl ?? ''} alt={`${cardViewLabel(detailResult, index)}: ${page.label}`} />
+                    </button>
+                  {/each}
+                </div>
+              </section>
+            {:else if mediaPage?.mediaUrl && mediaPage.mediaType === 'image'}
               <div class="document-stage interactive-media-stage">
                 <div
                   class="media-pan-layer"
@@ -2600,7 +2728,7 @@
           {#if (detailResult.matchedFields ?? []).length > 0}
             <section class="matched-fields" aria-label="Gesuchte und gefundene Metadaten">
               <span class="eyebrow">Gesucht und gefunden</span>
-              <p>Hover über einen Eintrag markiert die OCR-Fundstelle in der aktuell gewählten Kartenansicht.</p>
+              <p>Hover über einen Eintrag sucht die passende Kartenansicht und markiert die OCR-Fundstelle gelb über dem Bild.</p>
               <div class="transcript-lines">
                 {#each detailResult.matchedFields ?? [] as field}
                   {@const fieldLineId = matchedFieldLineId(detailResult, field)}
@@ -2608,11 +2736,11 @@
                     class="transcript-line image-hit-line"
                     class:active={focusedLineId === fieldLineId}
                     type="button"
-                    onmouseenter={() => setHoveredLine(fieldLineId)}
+                    onmouseenter={() => void activateMatchedField(selectedDetailResult, field, 'hover')}
                     onmouseleave={clearHoveredLine}
-                    onfocus={() => setHoveredLine(fieldLineId)}
+                    onfocus={() => void activateMatchedField(selectedDetailResult, field, 'hover')}
                     onblur={clearHoveredLine}
-                    onclick={() => togglePinnedLine(fieldLineId)}
+                    onclick={() => void activateMatchedField(selectedDetailResult, field, 'pin')}
                   >
                     <span>{field.label}</span>
                     <strong>{field.value}</strong>
@@ -3048,7 +3176,7 @@
       <section class="method-grid" aria-label="Bewertung und Grenzen">
         <article class="method-panel">
           <span class="eyebrow">Ranking</span>
-          <h2>Was die Trefferwahrscheinlichkeit meint</h2>
+          <h2>Was die Rangstärke bedeutet</h2>
           <p>
             Der Score beschreibt Plausibilität im Vergleich zu anderen Kandidaten. Er ist hoch, wenn mehrere Merkmale
             konsistent zusammenpassen, und niedriger, wenn nur Namensähnlichkeit oder unsichere Textstellen vorliegen.

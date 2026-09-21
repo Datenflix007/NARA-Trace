@@ -30,6 +30,16 @@ Maßgeblich bleiben die Originalkarte, ihr archivischer Kontext und eine nachvol
 3. **Am Original prüfen:** Bildseite, Transkript, Rolle und Frame werden nebeneinander gelesen – nicht nur ein Score.
 4. **Ergebnis festhalten:** Recherchebericht, Suchprofil und Evidenz ermöglichen die spätere Nachprüfung.
 
+### Vom Suchlauf zur Karte
+
+NARATrace fuehrt nach einem abgeschlossenen Suchlauf direkt in den gespeicherten Verlauf. Dort steht nicht ein vermeintlich endgueltiger Treffer im Vordergrund, sondern eine lesbare Pruefstrecke:
+
+1. **Rangfolge lesen:** Die Rangstaerke ordnet Hinweise innerhalb dieses Suchlaufs. Sie ist keine prozentuale Identitaetswahrscheinlichkeit und erreicht bewusst nie 100.
+2. **Karte im Zusammenhang lesen:** Die Rohansicht zeigt einen einzelnen Frame mit Zoom und OCR-Markern. Der Modus **Kartenpaar** legt Vorder- und Rueckseite nebeneinander, damit Handschrift, Formularfelder und Fortsetzungen vergleichbar bleiben.
+3. **Attribut am Original pruefen:** Unter **Gesucht und gefunden** springt Hover zur Kartenansicht, auf der NARA-OCR den betreffenden Namen oder die Nummer tatsaechlich erkannt hat, und markiert die Fundstelle gelb direkt im Bild.
+
+So bleibt sichtbar, welche Aussage aus welchem Frame stammt und welche Zuordnung noch durch eigene Quellenkritik bestaetigt werden muss.
+
 ### Einstieg nach Interesse
 
 - Für die Arbeit mit der Anwendung: [Nutzeranleitung](docs/USER-GUIDE.md)
@@ -41,7 +51,7 @@ Maßgeblich bleiben die Originalkarte, ihr archivischer Kontext und eine nachvol
 
 ### Startseite und Anzeige-Beispiel
 
-Die Startseite zeigt direkt eine kompakte Demo-Trefferliste mit Quellenbadge, Trefferwahrscheinlichkeit und Personenfakten.
+Die Startseite zeigt direkt eine kompakte Demo-Trefferliste mit Quellenbadge, Rangstärke und Personenfakten.
 Neue Nutzer sehen dort außerdem den Forschungsworkflow vom eigenen API-Schlüssel bis zum exportierbaren Recherchebericht.
 
 ### Neue Suche
@@ -70,7 +80,7 @@ Der Methodik-Reiter erklärt den Workflow von Suchprofil über Kandidatenabruf u
 - gerankte Trefferlisten mit Evidenzhinweisen
 - Suchverläufe mit lokal gespeicherten Treffern
 - Dekadenübersicht für datierbare Treffer eines Suchlaufs
-- Markdown-Rechercheberichte mit Suchprofil, Abfragen, Treffer- und Evidenzdokumentation
+- Rechercheberichte als PDF (Standard), HTML oder Markdown mit Suchprofil, Abfragen, Treffer- und Evidenzdokumentation
 - Original- und Medienansicht mit Mehrseiten-Navigation, Zoom und Transkriptkorrektur
 - Lokale Dokumentprüfung für PDF-, Bild- und Scanmaterial
 - OCR-Fundstellen als Hilfe beim Lesen und Gegenprüfen, nicht als Ersatz für das Original

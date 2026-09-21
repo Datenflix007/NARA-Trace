@@ -4,6 +4,10 @@ Aktualisierung 2026-09-21: A3340-Kartenansichten werden als zusammenhaengende Fo
 
 Aktualisierung 2026-09-21: Der offizielle AWS-Open-Data-Bucket ist als regionaler Roll-JSON-Endpunkt eingebunden. Eine getrennte, abgesicherte Bulk-Aktion kann nur Metadaten/OCR oder nach expliziter Bestaetigung den Vollbestand synchronisieren.
 
+Aktualisierung 2026-09-21: Abgeschlossene Suchlaeufe oeffnen direkt ihren gespeicherten Verlauf. Kartenfolgen werden vor dem Ranking dedupliziert, Rangstaerke wird nicht als Gewissheit dargestellt, Attribute springen zu echten OCR-Markern und die Vollansicht bietet ein Kartenpaar neben der Rohansicht.
+
+Aktualisierung 2026-09-21: Rechercheberichte bieten im aktuellen Suchlauf und im Suchverlauf eine Formatauswahl. PDF ist Standard; HTML und Markdown bleiben als bearbeitbare Alternativen verfuegbar. Die bisherige Markdown-Exportadresse bleibt kompatibel.
+
 Stand: 2026-09-20. Diese Datei ist der verbindliche Einstiegspunkt für die nächste Sitzung. Nach jedem abgeschlossenen Teilabschnitt müssen Tests, Dokumentation und dieser Status aktualisiert werden.
 
 ## Projektziel

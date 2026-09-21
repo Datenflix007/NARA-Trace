@@ -197,6 +197,28 @@ p {
 
 .report-actions {
   margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+}
+
+.report-format {
+  display: grid;
+  gap: 3px;
+  color: #4c5c59;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.report-format select {
+  min-height: 40px;
+  border: 1px solid #aebfba;
+  border-radius: 6px;
+  padding: 7px 30px 7px 10px;
+  background: #fff;
+  color: #172321;
+  font: inherit;
 }
 
 .page-header,
@@ -1089,6 +1111,65 @@ textarea {
   outline: none;
 }
 
+.compact-button.active {
+  border-color: #207c75;
+  background: #e4f2ef;
+  color: #164944;
+}
+
+.card-spread {
+  display: grid;
+  gap: 10px;
+}
+
+.card-spread-note {
+  margin: 0;
+  color: #5f6868;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.card-spread-pages {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.card-spread-page {
+  display: grid;
+  gap: 8px;
+  overflow: hidden;
+  padding: 8px;
+  border: 1px solid #aebbb7;
+  border-radius: 6px;
+  background: #101414;
+  color: #ffffff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-spread-page span {
+  padding: 2px 3px;
+  color: #e8f1ef;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.card-spread-page img {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #ffffff;
+}
+
+.card-spread-page:hover,
+.card-spread-page:focus-visible {
+  border-color: #d0a200;
+  outline: 3px solid rgba(208, 162, 0, 0.28);
+  outline-offset: 2px;
+}
+
 .interactive-media-stage {
   display: grid;
   place-items: center;
@@ -1823,5 +1904,9 @@ footer {
 
   .transcript-line small {
     grid-column: 1;
+  }
+
+  .card-spread-pages {
+    grid-template-columns: 1fr;
   }
 }

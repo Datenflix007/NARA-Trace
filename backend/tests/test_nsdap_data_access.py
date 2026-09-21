@@ -5,9 +5,9 @@ import pytest
 from naratrace.api.schemas import SearchRequest
 from naratrace.nsdap.frame_search import search_frames
 from naratrace.nsdap.manifest import parse_manifest
-from naratrace.nsdap.models import NsdapFrame
+from naratrace.nsdap.models import FrameMatch, NsdapFrame
 from naratrace.nsdap.roll_loader import S3_HTTP_BASE, parse_roll_document, roll_json_url
-from naratrace.processing.nsdap_candidates import number_matches
+from naratrace.processing.nsdap_candidates import NsdapCandidate, dedupe_card_sequences, number_matches
 from naratrace.processing.nsdap_candidates import retrieve_nsdap_candidates
 
 
@@ -121,7 +121,34 @@ def test_membership_number_retrieval_finds_the_concrete_card_frame():
     assert len(candidates) == 1
     assert candidates[0].frame.frame_number == 1
     assert candidates[0].frame_match.strategy == "membership_number_exact"
-    assert candidates[0].frame_match.retrieval_score == 100.0
+    assert candidates[0].frame_match.retrieval_score == 88.0
+
+
+def test_card_sequence_deduplication_keeps_front_and_reverse_as_one_result():
+    roll = parse_manifest(
+        [
+            {
+                "id": "593495034",
+                "agency": "MFKL",
+                "box": "R0014",
+                "title": "Schultze, Paul - Schultze, Robert",
+                "s3": "s3://nara-nsdap/A3340-MFKL/A3340-MFKL-R0014",
+            }
+        ]
+    )[0]
+    front = NsdapFrame(roll, 10, "front", "front.tif", "https://example.invalid/front.tif", "Name: Paul", {})
+    reverse = NsdapFrame(roll, 11, "reverse", "reverse.tif", "https://example.invalid/reverse.tif", "Mitgl. No. 347541", {})
+    card_frames = (front, reverse)
+
+    deduplicated = dedupe_card_sequences(
+        [
+            NsdapCandidate(roll, FrameMatch(front, 98.0, (), "name+number"), card_frames),
+            NsdapCandidate(roll, FrameMatch(reverse, 95.0, (), "membership_number_exact"), card_frames),
+        ]
+    )
+
+    assert len(deduplicated) == 1
+    assert deduplicated[0].card_frames == card_frames
 
 
 @pytest.mark.asyncio

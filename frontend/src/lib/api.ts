@@ -153,6 +153,8 @@ export type SearchReportDownload = {
   filename: string;
 };
 
+export type SearchReportFormat = 'pdf' | 'html' | 'markdown';
+
 export async function fetchHealth(): Promise<HealthResponse> {
   const response = await fetch('/api/health');
   if (!response.ok) {
@@ -191,8 +193,8 @@ export async function fetchSearchJob(jobId: string): Promise<SearchJobResponse> 
   return response.json() as Promise<SearchJobResponse>;
 }
 
-export async function downloadSearchReport(jobId: string): Promise<SearchReportDownload> {
-  const response = await fetch(`/api/search/${jobId}/export.md`);
+export async function downloadSearchReport(jobId: string, format: SearchReportFormat = 'pdf'): Promise<SearchReportDownload> {
+  const response = await fetch(`/api/search/${jobId}/export?format=${format}`);
   if (!response.ok) {
     throw new Error('Der Recherchebericht konnte nicht erstellt werden.');
   }
@@ -200,7 +202,7 @@ export async function downloadSearchReport(jobId: string): Promise<SearchReportD
   const match = /filename="([^"]+)"/.exec(disposition);
   return {
     blob: await response.blob(),
-    filename: match?.[1] ?? `naratrace-recherchebericht-${jobId}.md`
+    filename: match?.[1] ?? `naratrace-recherchebericht-${jobId}.${format === 'markdown' ? 'md' : format}`
   };
 }
 

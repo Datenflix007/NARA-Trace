@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 
 from naratrace.api.schemas import SearchRequest
+from naratrace.matching.name_normalizer import NameNormalizer
 from naratrace.nsdap.frame_search import search_frames
 from naratrace.nsdap.frame_index import NsdapFrameIndex, extract_number_terms
 from naratrace.nsdap.manifest import NsdapManifestClient
@@ -49,13 +50,18 @@ async def retrieve_nsdap_candidates(payload: SearchRequest) -> tuple[list[NsdapC
     matches: list[NsdapCandidate] = []
     for frame in frames:
         if payload.membership_number and frame_contains_number(frame, payload.membership_number):
-            matches.append(NsdapCandidate(frame.roll, FrameMatch(frame, 100.0, (), "membership_number_exact")))
+            matches.append(
+                NsdapCandidate(
+                    frame.roll,
+                    FrameMatch(frame, membership_number_score(frame, payload), (), "membership_number_exact"),
+                )
+            )
     for match in search_frames(frames, payload.first_name, payload.last_name, limit=600):
         matches.append(NsdapCandidate(roll=match.frame.roll, frame_match=strengthen_with_number(match, payload.membership_number)))
 
     matches.sort(key=lambda candidate: (-candidate.frame_match.retrieval_score, candidate.roll.box, candidate.frame.frame_number))
-    selected = dedupe_frames(matches)[:MAX_MATERIALIZED_A3340_FRAMES]
-    return [
+    selected = dedupe_frames(matches)
+    with_card_context = [
         NsdapCandidate(
             roll=candidate.roll,
             frame_match=candidate.frame_match,
@@ -69,7 +75,10 @@ async def retrieve_nsdap_candidates(payload: SearchRequest) -> tuple[list[NsdapC
             ),
         )
         for candidate in selected
-    ], warnings
+    ]
+    # Consecutive scans frequently describe the front and reverse of the same
+    # card.  They are evidence for one result, never three competing 100% hits.
+    return dedupe_card_sequences(with_card_context)[:MAX_MATERIALIZED_A3340_FRAMES], warnings
 
 
 def strengthen_with_number(match: FrameMatch, membership_number: str | None) -> FrameMatch:
@@ -77,7 +86,26 @@ def strengthen_with_number(match: FrameMatch, membership_number: str | None) -> 
     text_digits = re.sub(r"\D+", "", match.frame.extracted_text or "")
     if not digits or digits not in text_digits:
         return match
-    return FrameMatch(match.frame, 100.0, match.matched_variants, f"{match.strategy}+membership_number")
+    return FrameMatch(
+        match.frame,
+        min(99.0, round(match.retrieval_score + 8.0, 2)),
+        match.matched_variants,
+        f"{match.strategy}+membership_number",
+    )
+
+
+def membership_number_score(frame: NsdapFrame, payload: SearchRequest) -> float:
+    """Rank exact member-number hits without presenting certainty as 100%."""
+    normalizer = NameNormalizer()
+    text = normalizer.normalize(frame.extracted_text or "")
+    score = 88.0
+    surname = normalizer.normalize(payload.last_name)
+    if surname and surname in text:
+        score += 7.0
+    first_name = normalizer.normalize(payload.first_name or "")
+    if first_name and first_name in text:
+        score += 3.0
+    return min(99.0, score)
 
 
 def number_matches(roll: NsdapRoll, frames: list[NsdapFrame], membership_number: str) -> list[NsdapCandidate]:
@@ -85,7 +113,7 @@ def number_matches(roll: NsdapRoll, frames: list[NsdapFrame], membership_number:
     if not digits:
         return []
     return [
-        NsdapCandidate(roll, FrameMatch(frame, 100.0, (), "membership_number_exact"))
+        NsdapCandidate(roll, FrameMatch(frame, 88.0, (), "membership_number_exact"))
         for frame in frames
         if digits in extract_number_terms(frame.extracted_text or "")
     ]
@@ -103,6 +131,19 @@ def dedupe_frames(candidates: list[NsdapCandidate]) -> list[NsdapCandidate]:
     seen: set[tuple[str, int]] = set()
     for candidate in candidates:
         key = (candidate.roll.naid, candidate.frame.frame_number)
+        if key not in seen:
+            seen.add(key)
+            result.append(candidate)
+    return result
+
+
+def dedupe_card_sequences(candidates: list[NsdapCandidate]) -> list[NsdapCandidate]:
+    """Keep one ranked result per contiguous card, retaining all its pages."""
+    result: list[NsdapCandidate] = []
+    seen: set[tuple[str, int]] = set()
+    for candidate in candidates:
+        first_frame = (candidate.card_frames or (candidate.frame,))[0]
+        key = (candidate.roll.naid, first_frame.frame_number)
         if key not in seen:
             seen.add(key)
             result.append(candidate)

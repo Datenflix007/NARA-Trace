@@ -728,7 +728,9 @@ def store_nsdap_candidate(
     session.flush()
     pages = add_materialized_pages(session, record, materialized_pages)
     page = next((item for item in pages if item.is_relevant), pages[0] if pages else None)
-    score = candidate.frame_match.retrieval_score
+    # A retrieval score orders archival leads; it is not a probability or an
+    # identity determination.  Never show mathematical certainty for OCR.
+    score = min(99.0, candidate.frame_match.retrieval_score)
     result = SearchResult(
         job_id=job.id,
         candidate_record_id=record.id,
