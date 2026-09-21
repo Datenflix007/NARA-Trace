@@ -29,7 +29,6 @@
     type SearchResultResponse,
     type SettingsResponse
   } from './lib/api';
-  import TranscriptAnnotationViewer from './lib/TranscriptAnnotationViewer.svelte';
   import schultzePage2Url from './assets/demo/schultze-page-2.png';
 
   type RouteId = 'start' | 'search' | 'history' | 'local-documents' | 'settings' | 'methodology' | 'about' | 'result-detail';
@@ -93,6 +92,12 @@
   };
 
   type CardDisplayMode = 'single' | 'spread';
+
+  type CardPageGroups = {
+    front: DisplayMediaPage[];
+    back: DisplayMediaPage[];
+    other: DisplayMediaPage[];
+  };
 
   type ImageHitRegion = PageHitRegionResponse;
 
@@ -951,8 +956,38 @@
     refreshMediaViewer(result);
   }
 
-  function readableCardPages(result: DisplayResult) {
-    return result.mediaPages.filter((page) => page.mediaType === 'image' && page.mediaUrl).slice(0, 2);
+  function cardPageGroups(result: DisplayResult): CardPageGroups {
+    const pages = result.mediaPages.filter((page) => page.mediaType === 'image' && page.mediaUrl);
+    if (pages.length === 0) return { front: [], back: [], other: [] };
+    if (pages.length === 1) return { front: pages, back: [], other: [] };
+    const signals = pages.map(cardSideSignals);
+    const secondPageIsClearlyBack = signals[1].back >= signals[1].front + 3;
+    // A3340 roll JSON has no explicit card-side metadata. Fold-out cards
+    // normally use two scans per side: front 1/2, reverse 1/2. In short
+    // sequences only, a strongly back-specific OCR signal may make page 2
+    // the reverse already. Further frames are intentionally not mislabelled
+    // as reverse pages and remain available as "Sonstige".
+    const frontCount = pages.length >= 4 || !secondPageIsClearlyBack ? 2 : 1;
+    const backCount = pages.length === 3 && frontCount === 1 ? 1 : Math.min(2, pages.length - frontCount);
+    return {
+      front: pages.slice(0, frontCount),
+      back: pages.slice(frontCount, frontCount + backCount),
+      other: pages.slice(frontCount + backCount)
+    };
+  }
+
+  function cardSideSignals(page: DisplayMediaPage) {
+    const text = page.transcriptText?.toLocaleLowerCase('de-DE') ?? '';
+    const front =
+      (/(?:mitgl\.?|mitglieds?\s*-?)\s*(?:nr|no)/.test(text) ? 3 : 0) +
+      (/aufnahme(?:\s+beantragt)?/.test(text) ? 2 : 0) +
+      (/austritt|wiedereintritt|ausschluss|gelöscht|gestorben/.test(text) ? 2 : 0);
+    const back =
+      (/monatsmeld(?:g|ung)/.test(text) ? 3 : 0) +
+      (/registratur[ -]?vorgang/.test(text) ? 3 : 0) +
+      (/verwarnung|mitgliedskarte\s+ausgestellt/.test(text) ? 2 : 0) +
+      (/ortsgr\.?|lt\.?\s*rl\.?/.test(text) ? 1 : 0);
+    return { front, back };
   }
 
   function isA3340CardSequence(result: DisplayResult) {
@@ -961,9 +996,15 @@
 
   function cardViewLabel(result: DisplayResult, index: number) {
     if (!isA3340CardSequence(result)) return `Ansicht ${index + 1}`;
-    if (index === 0) return 'Vorderseite';
-    if (index === 1) return 'Rückseite';
-    return `Fortsetzung ${index - 1}`;
+    const page = result.mediaPages[index];
+    const groups = cardPageGroups(result);
+    const frontIndex = groups.front.indexOf(page);
+    if (frontIndex >= 0) return `Vorderseite ${frontIndex + 1}`;
+    const backIndex = groups.back.indexOf(page);
+    if (backIndex >= 0) return `Rückseite ${backIndex + 1}`;
+    const otherIndex = groups.other.indexOf(page);
+    if (otherIndex >= 0) return `Sonstige ${otherIndex + 1}`;
+    return `Ansicht ${index + 1}`;
   }
 
   function mediaViewAccessibleLabel(result: DisplayResult, page: DisplayMediaPage, index: number) {
@@ -1431,11 +1472,19 @@
       }
       await loadHistory();
       if (currentJob?.status === 'complete') {
-        selectedHistoryJob = currentJob;
-        selectedHistoryResults = currentResults;
+        const storedJob = historyJobs.find((job) => job.id === currentJob?.id);
         historyHint = `Suchlauf für "${name}" ist abgeschlossen. Prüfe die Rangfolge und die Originalkarten.`;
         activeRoute = 'history';
         window.location.hash = 'history';
+        if (storedJob) {
+          await openHistoryJob(storedJob);
+          historyHint = `Suchlauf für "${name}" ist abgeschlossen. Prüfe die Rangfolge und die Originalkarten.`;
+        } else {
+          // The result page remains usable even when a short history refresh
+          // failed after the completed job was saved.
+          selectedHistoryJob = currentJob;
+          selectedHistoryResults = currentResults;
+        }
       }
     } catch (error) {
       searchError = error instanceof Error ? error.message : 'Der Suchjob konnte nicht angelegt werden.';
@@ -2609,25 +2658,84 @@
                 </div>
               </div>
             {/if}
-            {#if cardDisplayMode(detailResult) === 'spread' && readableCardPages(detailResult).length > 1}
-              <section class="card-spread" aria-label="Vorder- und Rückseite nebeneinander">
-                <p class="card-spread-note">Browserfähige Lesefläche: Vorder- und Rückseite derselben Karte nebeneinander. Wähle eine Seite für die Rohansicht mit OCR-Markierungen.</p>
-                <div class="card-spread-pages">
-                  {#each readableCardPages(detailResult) as page, index}
-                    <button
-                      class="card-spread-page"
-                      type="button"
-                      onclick={() => {
-                        const pageIndex = selectedDetailResult.mediaPages.indexOf(page);
-                        setMediaPage(selectedDetailResult, pageIndex);
-                        setCardDisplayMode(selectedDetailResult, 'single');
-                      }}
-                      aria-label={`${cardViewLabel(detailResult, index)} in Rohansicht öffnen`}
-                    >
-                      <span>{cardViewLabel(detailResult, index)} · Frame {page.pageNumber}</span>
-                      <img src={page.mediaUrl ?? ''} alt={`${cardViewLabel(detailResult, index)}: ${page.label}`} />
-                    </button>
-                  {/each}
+            {#if cardDisplayMode(detailResult) === 'spread' && cardPageGroups(detailResult).front.length > 0}
+              {@const cardGroups = cardPageGroups(detailResult)}
+              <section class="card-spread" aria-label="Vorder- und Rückseiten der Karte">
+                <p class="card-spread-note">Faltkarte: Vorderseite 1-2, Rückseite 1-2 und weitere Frames als Sonstige. Bei kurzen Folgen hilft die OCR bei der Zuordnung. Wähle ein Bild für die Rohansicht mit OCR-Markierungen.</p>
+                <div class="card-spread-groups">
+                  <section class="card-spread-group" aria-label="Vorderseiten der Karte">
+                    <div class="card-spread-group-heading">
+                      <span class="eyebrow">Vorderseite</span>
+                      <strong>{cardGroups.front.length === 1 ? '1 Bild' : `${cardGroups.front.length} Bilder`}</strong>
+                    </div>
+                    <div class="card-spread-pages">
+                      {#each cardGroups.front as page}
+                        <button
+                          class="card-spread-page"
+                          type="button"
+                          onclick={() => {
+                            const pageIndex = selectedDetailResult.mediaPages.indexOf(page);
+                            setMediaPage(selectedDetailResult, pageIndex);
+                            setCardDisplayMode(selectedDetailResult, 'single');
+                          }}
+                          aria-label={`${cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))} in Rohansicht öffnen`}
+                        >
+                          <span>{cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))} · Frame {page.pageNumber}</span>
+                          <img src={page.mediaUrl ?? ''} alt={`${cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))}: ${page.label}`} />
+                        </button>
+                      {/each}
+                    </div>
+                  </section>
+                  {#if cardGroups.back.length > 0}
+                    <section class="card-spread-group" aria-label="Rückseiten der Karte">
+                      <div class="card-spread-group-heading">
+                        <span class="eyebrow">Rückseite</span>
+                        <strong>{cardGroups.back.length === 1 ? '1 Bild' : `${cardGroups.back.length} Bilder`}</strong>
+                      </div>
+                      <div class="card-spread-pages">
+                        {#each cardGroups.back as page}
+                          <button
+                            class="card-spread-page"
+                            type="button"
+                            onclick={() => {
+                              const pageIndex = selectedDetailResult.mediaPages.indexOf(page);
+                              setMediaPage(selectedDetailResult, pageIndex);
+                              setCardDisplayMode(selectedDetailResult, 'single');
+                            }}
+                            aria-label={`${cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))} in Rohansicht öffnen`}
+                          >
+                            <span>{cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))} · Frame {page.pageNumber}</span>
+                            <img src={page.mediaUrl ?? ''} alt={`${cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))}: ${page.label}`} />
+                          </button>
+                        {/each}
+                      </div>
+                    </section>
+                  {/if}
+                  {#if cardGroups.other.length > 0}
+                    <section class="card-spread-group" aria-label="Sonstige Kartenansichten">
+                      <div class="card-spread-group-heading">
+                        <span class="eyebrow">Sonstige</span>
+                        <strong>{cardGroups.other.length === 1 ? '1 Bild' : `${cardGroups.other.length} Bilder`}</strong>
+                      </div>
+                      <div class="card-spread-pages">
+                        {#each cardGroups.other as page}
+                          <button
+                            class="card-spread-page"
+                            type="button"
+                            onclick={() => {
+                              const pageIndex = selectedDetailResult.mediaPages.indexOf(page);
+                              setMediaPage(selectedDetailResult, pageIndex);
+                              setCardDisplayMode(selectedDetailResult, 'single');
+                            }}
+                            aria-label={`${cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))} in Rohansicht öffnen`}
+                          >
+                            <span>{cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))} · Frame {page.pageNumber}</span>
+                            <img src={page.mediaUrl ?? ''} alt={`${cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))}: ${page.label}`} />
+                          </button>
+                        {/each}
+                      </div>
+                    </section>
+                  {/if}
                 </div>
               </section>
             {:else if mediaPage?.mediaUrl && mediaPage.mediaType === 'image'}
@@ -2825,13 +2933,6 @@
                 </p>
               </section>
             {/if}
-            <TranscriptAnnotationViewer
-              documentId={`naratrace-${detailResult.key}`}
-              title={detailResult.title}
-              text={transcriptDraft}
-              source={detailResult.transcriptSource}
-              terms={detailResult.highlightTerms ?? []}
-            />
             <label>
               Transkription
               <textarea class="transcript-editor" bind:value={transcriptDraft} rows="16"></textarea>

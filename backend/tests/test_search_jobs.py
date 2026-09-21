@@ -259,6 +259,14 @@ async def test_a3340_search_job_returns_one_concrete_card_frame_with_highlight_t
             assert media_response.status_code == 200
             assert media_response.headers["content-type"] == "image/jpeg"
 
+            pdf_response = await client.get(f"/api/search/{job['id']}/export")
+            html_response = await client.get(f"/api/search/{job['id']}/export?format=html")
+            markdown_response = await client.get(f"/api/search/{job['id']}/export?format=markdown")
+            assert pdf_response.content.startswith(b"%PDF")
+            assert b"/Image" in pdf_response.content
+            assert '<img src="data:image/jpeg;base64,' in html_response.text
+            assert "data:image/jpeg;base64," in markdown_response.text
+
 
 @pytest.mark.asyncio
 async def test_create_search_job_with_mock_returns_labeled_mock_results(tmp_path, monkeypatch):

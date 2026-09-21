@@ -281,7 +281,10 @@ describe('App', () => {
         return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
       if (url === '/api/search') {
-        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify([searchJob({ id: 'job-catalog', result_count: 1 })]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
       return new Response('{}', { status: 404 });
     });
@@ -301,7 +304,9 @@ describe('App', () => {
       expect(screen.getByRole('heading', { name: 'Suchverläufe' })).toBeTruthy();
     });
     expect(screen.getByText(/Suchlauf für "Paul Schultze-Naumburg" ist abgeschlossen/)).toBeTruthy();
-    expect(screen.getByText('Ausgewählter Suchlauf')).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByText('Ausgewählter Suchlauf')).toBeTruthy();
+    });
 
     const searchCall = fetchMock.mock.calls.find(([url, init]) => String(url) === '/api/search' && init?.method === 'POST');
     expect(searchCall?.[1]?.body).toEqual(expect.stringContaining('membership_number'));
@@ -365,7 +370,10 @@ describe('App', () => {
         return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
       if (url === '/api/search') {
-        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify([searchJob({ id: 'job-catalog', result_count: 1 })]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
       return new Response('{}', { status: 404 });
     });
@@ -645,7 +653,7 @@ describe('App', () => {
     expect((screen.getByLabelText('Transkription') as HTMLTextAreaElement).value).toBe('OCR Volltext der Karte');
   });
 
-  it('zeigt fuer Metadaten-Treffer ohne Bildcache eine NARA-Catalog-Vorschau', async () => {
+  it('öffnet den gespeicherten Suchverlauf automatisch für Metadaten-Treffer ohne Bildcache', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = String(input);
       if (url === '/api/settings') {
@@ -684,7 +692,10 @@ describe('App', () => {
         );
       }
       if (url === '/api/search') {
-        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify([searchJob({ id: 'job-catalog', result_count: 1 })]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
       return new Response('{}', { status: 404 });
     });
@@ -698,10 +709,12 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByTitle('NARA Catalog Datensatz 270851699')).toBeTruthy();
     });
-    expect(screen.getByRole('link', { name: 'NARA-Datensatz öffnen' }).getAttribute('href')).toBe(
-      'https://catalog.archives.gov/id/270851699'
-    );
-    expect(screen.queryByText('Kein lokales Originalbild')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText('Ausgewählter Suchlauf')).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Number 944 (Serial 944) (1 of 2)')).toBeTruthy();
+    });
   });
 
   it('öffnet im Suchverlauf einen Job nach kurzem Ladefehler und sortiert Treffer nach Wahrscheinlichkeit', async () => {
@@ -1122,6 +1135,45 @@ describe('App', () => {
           transcript_text: 'Paul Schultze-Naumburg membership number 347 541',
           transcript_source: 'local OCR',
           transcript_edited: false
+        },
+        {
+          page_id: 44,
+          page_number: 3,
+          label: 'A3340 MFKL R0013 - card frame 2949',
+          media_url: '/api/pages/44/media',
+          media_type: 'image',
+          original_url: null,
+          thumbnail_url: '/api/pages/44/media',
+          mime_type: 'image/jpeg',
+          transcript_text: 'Monatsmeldg. Gau: Halle Merseburg Ortsgr. Naumburg',
+          transcript_source: 'local OCR',
+          transcript_edited: false
+        },
+        {
+          page_id: 45,
+          page_number: 4,
+          label: 'A3340 MFKL R0013 - card frame 2950',
+          media_url: '/api/pages/45/media',
+          media_type: 'image',
+          original_url: null,
+          thumbnail_url: '/api/pages/45/media',
+          mime_type: 'image/jpeg',
+          transcript_text: 'Registratur-Vorgang und Monatsmeldung',
+          transcript_source: 'local OCR',
+          transcript_edited: false
+        },
+        {
+          page_id: 46,
+          page_number: 5,
+          label: 'A3340 MFKL R0013 - card frame 2951',
+          media_url: '/api/pages/46/media',
+          media_type: 'image',
+          original_url: null,
+          thumbnail_url: '/api/pages/46/media',
+          mime_type: 'image/jpeg',
+          transcript_text: 'Ergänzende Karteiansicht ohne eindeutige Formularmerkmale',
+          transcript_source: 'local OCR',
+          transcript_edited: false
         }
       ],
       highlight_terms: ['Paul', '347541'],
@@ -1174,10 +1226,18 @@ describe('App', () => {
     expect(screen.getByLabelText('Kartenansichten')).toBeTruthy();
     expect(screen.getByRole('button', { name: /Vorderseite.*2947/ })).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Kartenpaar' }));
-    expect(screen.getByLabelText('Vorder- und Rückseite nebeneinander')).toBeTruthy();
+    expect(screen.getByLabelText('Vorder- und Rückseiten der Karte')).toBeTruthy();
+    expect(screen.getByLabelText('Vorderseiten der Karte')).toBeTruthy();
+    expect(screen.getByLabelText('Rückseiten der Karte')).toBeTruthy();
+    expect(screen.getByLabelText('Sonstige Kartenansichten')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Vorderseite 1.*2947/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Vorderseite 2.*2948/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Rückseite 1.*2949/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Rückseite 2.*2950/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Sonstige.*2951/ })).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: 'Rohansicht' }));
-    await fireEvent.click(screen.getByRole('button', { name: /Rückseite.*2948/ }));
-    expect(screen.getByRole('heading', { name: 'A3340 MFKL R0013 - card frame 2948' })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: /Rückseite.*2949/ }));
+    expect(screen.getByRole('heading', { name: 'A3340 MFKL R0013 - card frame 2949' })).toBeTruthy();
     await fireEvent.click(screen.getByRole('button', { name: /Vorderseite.*2947/ }));
     await waitFor(() => expect(screen.getByText('Treffer auf der Originalseite')).toBeTruthy());
     const imageHitControl = screen.getByRole('button', { name: /Treffer im Bild Paul/ });

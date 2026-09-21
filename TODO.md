@@ -8,6 +8,8 @@ Aktualisierung 2026-09-21: Abgeschlossene Suchlaeufe oeffnen direkt ihren gespei
 
 Aktualisierung 2026-09-21: Rechercheberichte bieten im aktuellen Suchlauf und im Suchverlauf eine Formatauswahl. PDF ist Standard; HTML und Markdown bleiben als bearbeitbare Alternativen verfuegbar. Die bisherige Markdown-Exportadresse bleibt kompatibel.
 
+Aktualisierung 2026-09-21: Rechercheberichte betten lokal materialisierte Kartenbilder in PDF, HTML und Markdown ein. Die Kartenpaaransicht folgt der Faltkartenreihenfolge Vorderseite 1-2, Rueckseite 1-2, Sonstige; OCR entscheidet bei kurzen Folgen nur ueber die zweite Seite.
+
 Stand: 2026-09-20. Diese Datei ist der verbindliche Einstiegspunkt für die nächste Sitzung. Nach jedem abgeschlossenen Teilabschnitt müssen Tests, Dokumentation und dieser Status aktualisiert werden.
 
 ## Projektziel
@@ -66,7 +68,7 @@ Der Catalog bleibt Metadaten-/Provenienz-/Fallback-Quelle. Das A3340 Open Datase
 ## Phase 5 – OCR-/Frame-Suche
 
 - [x] NARA Extracted Text als Framequelle angelegt.
-- [ ] Nachbarframes gruppieren und Karten-Vorder-/Rückseiten erkennen.
+- [x] Nachbarframes gruppieren und Karten-Vorder-/Rückseiten mit OCR-Formularmerkmalen und Reihenfolge-Fallback als Lesehilfe erkennen.
 - [x] Nur die drei höchstgerankten Frame-Kandidaten werden als Einzel-TIFF geladen und browserfähig bereitgestellt; Rollen-PDFs werden nicht als Treffer verlinkt.
 - [ ] Lokale OCR-Provider-Schnittstelle von der Materialisierung trennen.
 

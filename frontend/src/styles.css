@@ -1122,6 +1122,33 @@ textarea {
   gap: 10px;
 }
 
+.card-spread-groups {
+  display: grid;
+  gap: 16px;
+}
+
+.card-spread-group {
+  display: grid;
+  gap: 9px;
+  border: 1px solid #cad2cf;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f6f8f7;
+}
+
+.card-spread-group-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.card-spread-group-heading strong {
+  color: #4c5c59;
+  font-size: 12px;
+}
+
 .card-spread-note {
   margin: 0;
   color: #5f6868;
@@ -1131,7 +1158,7 @@ textarea {
 
 .card-spread-pages {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
   align-items: start;
 }

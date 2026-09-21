@@ -35,7 +35,7 @@ Maßgeblich bleiben die Originalkarte, ihr archivischer Kontext und eine nachvol
 NARATrace fuehrt nach einem abgeschlossenen Suchlauf direkt in den gespeicherten Verlauf. Dort steht nicht ein vermeintlich endgueltiger Treffer im Vordergrund, sondern eine lesbare Pruefstrecke:
 
 1. **Rangfolge lesen:** Die Rangstaerke ordnet Hinweise innerhalb dieses Suchlaufs. Sie ist keine prozentuale Identitaetswahrscheinlichkeit und erreicht bewusst nie 100.
-2. **Karte im Zusammenhang lesen:** Die Rohansicht zeigt einen einzelnen Frame mit Zoom und OCR-Markern. Der Modus **Kartenpaar** legt Vorder- und Rueckseite nebeneinander, damit Handschrift, Formularfelder und Fortsetzungen vergleichbar bleiben.
+2. **Karte im Zusammenhang lesen:** Die Rohansicht zeigt einen einzelnen Frame mit Zoom und OCR-Markern. Der Modus **Kartenpaar** ordnet zusammengehörige Scans in eine obere Reihe der Vorderseiten und eine darunterliegende Reihe der Rückseiten ein, damit Handschrift, Formularfelder und Fortsetzungen vergleichbar bleiben.
 3. **Attribut am Original pruefen:** Unter **Gesucht und gefunden** springt Hover zur Kartenansicht, auf der NARA-OCR den betreffenden Namen oder die Nummer tatsaechlich erkannt hat, und markiert die Fundstelle gelb direkt im Bild.
 
 So bleibt sichtbar, welche Aussage aus welchem Frame stammt und welche Zuordnung noch durch eigene Quellenkritik bestaetigt werden muss.
@@ -88,7 +88,7 @@ Der Methodik-Reiter erklärt den Workflow von Suchprofil über Kandidatenabruf u
 
 ### Kartenansichten
 
-Bei A3340-Treffern speichert NARATrace die zusammenhaengenden Frames einer Karte in ihrer Reihenfolge. Browser erhalten lokale JPEG-Anzeigen statt eines TIFF-Downloads. Die Ansicht bietet direkte Schalter fuer Vorderseite, Rueckseite und weitere erkennbare Fortsetzungen; die Originalquelle bleibt am Treffer dokumentiert.
+Bei A3340-Treffern speichert NARATrace die zusammenhaengenden Frames einer Karte in ihrer Reihenfolge. Browser erhalten lokale JPEG-Anzeigen statt eines TIFF-Downloads. Die Kartenpaaransicht folgt bei Faltkarten der Lesereihenfolge **Vorderseite 1-2**, **Rückseite 1-2**, anschließend **Sonstige**. Bei kurzen Folgen hilft die OCR nur dabei zu erkennen, ob die zweite Seite schon die Rückseite ist. Die Einordnung bleibt eine praktische Lesehilfe; die Originalquelle bleibt am Treffer dokumentiert.
 
 ### Offizieller AWS-Bulkzugang
 
