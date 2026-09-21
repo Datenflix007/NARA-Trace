@@ -16,6 +16,7 @@ MAX_MATERIALIZED_A3340_FRAMES = 3
 class NsdapCandidate:
     roll: NsdapRoll
     frame_match: FrameMatch
+    card_frames: tuple[NsdapFrame, ...] = ()
 
     @property
     def frame(self) -> NsdapFrame:
@@ -53,7 +54,22 @@ async def retrieve_nsdap_candidates(payload: SearchRequest) -> tuple[list[NsdapC
         matches.append(NsdapCandidate(roll=match.frame.roll, frame_match=strengthen_with_number(match, payload.membership_number)))
 
     matches.sort(key=lambda candidate: (-candidate.frame_match.retrieval_score, candidate.roll.box, candidate.frame.frame_number))
-    return dedupe_frames(matches)[:MAX_MATERIALIZED_A3340_FRAMES], warnings
+    selected = dedupe_frames(matches)[:MAX_MATERIALIZED_A3340_FRAMES]
+    return [
+        NsdapCandidate(
+            roll=candidate.roll,
+            frame_match=candidate.frame_match,
+            card_frames=tuple(
+                frame_index.card_context_frames(
+                    candidate.roll,
+                    candidate.frame,
+                    surname=payload.last_name,
+                    membership_number=payload.membership_number,
+                )
+            ),
+        )
+        for candidate in selected
+    ], warnings
 
 
 def strengthen_with_number(match: FrameMatch, membership_number: str | None) -> FrameMatch:

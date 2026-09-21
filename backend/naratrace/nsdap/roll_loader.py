@@ -11,7 +11,9 @@ from naratrace.core.paths import ensure_local_directories
 from naratrace.nsdap.manifest import NsdapDataError
 from naratrace.nsdap.models import NsdapFrame, NsdapRoll
 
-S3_HTTP_BASE = "https://nara-nsdap.s3.amazonaws.com"
+# The Registry of Open Data lists the NSDAP bucket in us-east-2.  The
+# region-specific endpoint avoids relying on a legacy global S3 redirect.
+S3_HTTP_BASE = "https://nara-nsdap.s3.us-east-2.amazonaws.com"
 
 
 class NsdapRollLoader:

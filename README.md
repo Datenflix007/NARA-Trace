@@ -76,6 +76,24 @@ Der Methodik-Reiter erklärt den Workflow von Suchprofil über Kandidatenabruf u
 - OCR-Fundstellen als Hilfe beim Lesen und Gegenprüfen, nicht als Ersatz für das Original
 - Methodikseite mit Workflow-Schema und Grenzen der automatischen Bewertung
 
+### Kartenansichten
+
+Bei A3340-Treffern speichert NARATrace die zusammenhaengenden Frames einer Karte in ihrer Reihenfolge. Browser erhalten lokale JPEG-Anzeigen statt eines TIFF-Downloads. Die Ansicht bietet direkte Schalter fuer Vorderseite, Rueckseite und weitere erkennbare Fortsetzungen; die Originalquelle bleibt am Treffer dokumentiert.
+
+### Offizieller AWS-Bulkzugang
+
+NARA verweist fuer A3340 auf den oeffentlichen Bucket `s3://nara-nsdap` in `us-east-2`. Der normale Gesamtindex ist die sichere Bulk-Aktion fuer die Suche: Er verarbeitet die Roll-JSON-Dateien mit OCR und Provenienz, laedt aber keine Millionen TIFFs. Fuer einen eigenstaendigen lokalen Rohdatenbestand gibt es ein bewusst getrenntes PowerShell-Skript (AWS CLI v2 erforderlich):
+
+```powershell
+.\scripts\bulk-nsdap.ps1 -Destination D:\NARATrace-NSDAP -Mode Metadata
+```
+
+Das ist fortsetzbar und laedt nur JSON, ist aber trotzdem deutlich groesser als der NARATrace-Index. Der Vollbestand mit TIFFs und PDFs verlangt die explizite zweite Bestaetigung, weil er sehr viel Speicher beansprucht:
+
+```powershell
+.\scripts\bulk-nsdap.ps1 -Destination E:\NARATrace-NSDAP-vollbestand -Mode FullDataset -ConfirmFullDataset
+```
+
 ## Quellenbasis
 
 Datenquelle ist die U.S. National Archives and Records Administration - National Archives Catalog.

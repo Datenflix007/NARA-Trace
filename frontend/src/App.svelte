@@ -20,6 +20,7 @@
     type ApiKeyTestResponse,
     type HealthResponse,
     type LocalDocumentResponse,
+    type MatchedFieldResponse,
     type NaraApiUsageResponse,
     type PageHitRegionResponse,
     type ResultMediaPageResponse,
@@ -46,6 +47,7 @@
     jobId: string | null;
     key: string;
     title: string;
+    series: string;
     matchScore: number;
     category: string;
     dataSource: 'NARA' | 'MOCK' | 'LOCAL';
@@ -66,6 +68,7 @@
     mediaPages: DisplayMediaPage[];
     recordYears: number[];
     highlightTerms?: string[];
+    matchedFields?: MatchedFieldResponse[];
     evidence: string[];
   };
 
@@ -200,6 +203,7 @@
       jobId: null,
       key: 'demo-local-schultze',
       title: 'Lokale Demo-Datei: Paul Schultze-Naumburg, NSDAP-Kartei 1931',
+      series: 'Lokale Demo-Datei',
       matchScore: 96,
       category: 'sehr wahrscheinlich',
       dataSource: 'LOCAL',
@@ -810,6 +814,7 @@
       jobId: result.job_id,
       key: `${result.job_id}-${result.id}`,
       title: result.title ?? 'Ohne Titel',
+      series: result.series ?? '',
       matchScore: result.match_score,
       category: result.category,
       dataSource: result.data_source,
@@ -832,6 +837,7 @@
       mediaPages,
       recordYears: result.record_years ?? [],
       highlightTerms: result.highlight_terms ?? [],
+      matchedFields: result.matched_fields ?? [],
       evidence
     };
   }
@@ -928,6 +934,21 @@
 
   function currentMediaLabel(result: DisplayResult) {
     return currentMediaPage(result)?.label ?? result.sourcePageLabel;
+  }
+
+  function isA3340CardSequence(result: DisplayResult) {
+    return /a3340|mitgliedskartei|membership/i.test(`${result.title} ${result.series}`) && result.mediaPages.length > 1;
+  }
+
+  function cardViewLabel(result: DisplayResult, index: number) {
+    if (!isA3340CardSequence(result)) return `Ansicht ${index + 1}`;
+    if (index === 0) return 'Vorderseite';
+    if (index === 1) return 'Rückseite';
+    return `Fortsetzung ${index - 1}`;
+  }
+
+  function mediaViewAccessibleLabel(result: DisplayResult, page: DisplayMediaPage, index: number) {
+    return `${cardViewLabel(result, index)}: ${page.label}`;
   }
 
   function setMediaPage(result: DisplayResult, index: number) {
@@ -1061,6 +1082,11 @@
 
   function imageHitLineId(page: DisplayMediaPage, term: string) {
     return `image-hit:${page.pageId ?? 'no-page'}:${term.toLocaleLowerCase('de-DE')}`;
+  }
+
+  function matchedFieldLineId(result: DisplayResult, field: MatchedFieldResponse) {
+    const page = currentMediaPage(result);
+    return page ? imageHitLineId(page, field.term) : `matched-field:${result.key}:${field.term}`;
   }
 
   function imageHitRegionsFor(
@@ -1968,7 +1994,7 @@
                             <button class="button secondary compact-button" type="button" onclick={() => previousMediaPage(result)} disabled={currentMediaIndex(result) === 0}>
                               Zurück
                             </button>
-                            <span>{currentMediaIndex(result) + 1} / {result.mediaPages.length}</span>
+                            <span>{cardViewLabel(result, currentMediaIndex(result))} · {currentMediaIndex(result) + 1} / {result.mediaPages.length}</span>
                             <button class="button secondary compact-button" type="button" onclick={() => nextMediaPage(result)} disabled={currentMediaIndex(result) >= result.mediaPages.length - 1}>
                               Weiter
                             </button>
@@ -1979,6 +2005,25 @@
                             <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(result, -0.25)}>-</button>
                             <button class="button secondary compact-button" type="button" onclick={() => resetMediaTransform(result)}>Reset</button>
                           {/if}
+                        </div>
+                      {/if}
+                      {#if isA3340CardSequence(result)}
+                        <div class="card-view-strip" aria-label="Kartenansichten">
+                          <span class="eyebrow">Kartenansichten</span>
+                          <div class="card-view-buttons">
+                            {#each result.mediaPages as page, index}
+                              <button
+                                class="card-view-button"
+                                class:selected={currentMediaIndex(result) === index}
+                                type="button"
+                                onclick={() => setMediaPage(result, index)}
+                                aria-label={mediaViewAccessibleLabel(result, page, index)}
+                              >
+                                <strong>{cardViewLabel(result, index)}</strong>
+                                <span>Frame {page.pageNumber}</span>
+                              </button>
+                            {/each}
+                          </div>
                         </div>
                       {/if}
                       {#if mediaPage?.mediaUrl && mediaPage.mediaType === 'image'}
@@ -2075,6 +2120,31 @@
                         {result.residencePlace}
                       </span>
                     </div>
+                    {#if (result.matchedFields ?? []).length > 0}
+                      <section class="matched-fields" aria-label="Gesuchte und gefundene Metadaten">
+                        <span class="eyebrow">Gesucht und gefunden</span>
+                        <p>Hover über einen Eintrag markiert die OCR-Fundstelle in der aktuell gewählten Kartenansicht.</p>
+                        <div class="transcript-lines">
+                          {#each result.matchedFields ?? [] as field}
+                            {@const fieldLineId = matchedFieldLineId(result, field)}
+                            <button
+                              class="transcript-line image-hit-line"
+                              class:active={focusedLineId === fieldLineId}
+                              type="button"
+                              onmouseenter={() => setHoveredLine(fieldLineId)}
+                              onmouseleave={clearHoveredLine}
+                              onfocus={() => setHoveredLine(fieldLineId)}
+                              onblur={clearHoveredLine}
+                              onclick={() => togglePinnedLine(fieldLineId)}
+                            >
+                              <span>{field.label}</span>
+                              <strong>{field.value}</strong>
+                              <small>{field.source}</small>
+                            </button>
+                          {/each}
+                        </div>
+                      </section>
+                    {/if}
                     <div class="transcript-lines">
                       {#each transcriptRowsFor(result) as line}
                         <button
@@ -2400,7 +2470,7 @@
                   <button class="button secondary compact-button" type="button" onclick={() => previousMediaPage(selectedDetailResult)} disabled={currentMediaIndex(selectedDetailResult) === 0}>
                     Zurück
                   </button>
-                  <span>{currentMediaIndex(selectedDetailResult) + 1} / {detailResult.mediaPages.length}</span>
+                  <span>{cardViewLabel(selectedDetailResult, currentMediaIndex(selectedDetailResult))} · {currentMediaIndex(selectedDetailResult) + 1} / {detailResult.mediaPages.length}</span>
                   <button class="button secondary compact-button" type="button" onclick={() => nextMediaPage(selectedDetailResult)} disabled={currentMediaIndex(selectedDetailResult) >= detailResult.mediaPages.length - 1}>
                     Weiter
                   </button>
@@ -2411,6 +2481,25 @@
                   <button class="button secondary compact-button" type="button" onclick={() => zoomMedia(selectedDetailResult, -0.25)}>-</button>
                   <button class="button secondary compact-button" type="button" onclick={() => resetMediaTransform(selectedDetailResult)}>Reset</button>
                 {/if}
+              </div>
+            {/if}
+            {#if isA3340CardSequence(detailResult)}
+              <div class="card-view-strip" aria-label="Kartenansichten">
+                <span class="eyebrow">Kartenansichten</span>
+                <div class="card-view-buttons">
+                  {#each detailResult.mediaPages as page, index}
+                    <button
+                      class="card-view-button"
+                      class:selected={currentMediaIndex(detailResult) === index}
+                      type="button"
+                      onclick={() => setMediaPage(selectedDetailResult, index)}
+                      aria-label={mediaViewAccessibleLabel(detailResult, page, index)}
+                    >
+                      <strong>{cardViewLabel(detailResult, index)}</strong>
+                      <span>Frame {page.pageNumber}</span>
+                    </button>
+                  {/each}
+                </div>
               </div>
             {/if}
             {#if mediaPage?.mediaUrl && mediaPage.mediaType === 'image'}
@@ -2507,6 +2596,32 @@
               {detailResult.residencePlace}
             </span>
           </div>
+
+          {#if (detailResult.matchedFields ?? []).length > 0}
+            <section class="matched-fields" aria-label="Gesuchte und gefundene Metadaten">
+              <span class="eyebrow">Gesucht und gefunden</span>
+              <p>Hover über einen Eintrag markiert die OCR-Fundstelle in der aktuell gewählten Kartenansicht.</p>
+              <div class="transcript-lines">
+                {#each detailResult.matchedFields ?? [] as field}
+                  {@const fieldLineId = matchedFieldLineId(detailResult, field)}
+                  <button
+                    class="transcript-line image-hit-line"
+                    class:active={focusedLineId === fieldLineId}
+                    type="button"
+                    onmouseenter={() => setHoveredLine(fieldLineId)}
+                    onmouseleave={clearHoveredLine}
+                    onfocus={() => setHoveredLine(fieldLineId)}
+                    onblur={clearHoveredLine}
+                    onclick={() => togglePinnedLine(fieldLineId)}
+                  >
+                    <span>{field.label}</span>
+                    <strong>{field.value}</strong>
+                    <small>{field.source}</small>
+                  </button>
+                {/each}
+              </div>
+            </section>
+          {/if}
 
           {#if transcriptRowsFor(detailResult).length > 0}
             <div class="transcript-lines">

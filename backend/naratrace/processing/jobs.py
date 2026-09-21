@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from naratrace.api.schemas import (
     MatchEvidenceResponse,
+    MatchedFieldResponse,
     ResultMediaPageResponse,
     SearchJobResponse,
     SearchRequest,
@@ -648,25 +649,32 @@ async def store_nsdap_candidates(
         if is_search_job_cancelled(job_id):
             return stored, warnings
         frame = candidate.frame
-        frame_naid = frame.object_id or f"{candidate.roll.naid}-frame-{frame.frame_number}"
-        try:
-            materialized = await materialize_digital_object(
-                job_id,
-                frame_naid,
-                frame.frame_number - 1,
-                frame.raw,
-                extract_ocr=False,
-            )
-        except Exception as exc:
-            warnings.append(f"{candidate.roll.collection} {candidate.roll.box}, Frame {frame.frame_number}: {exc}")
+        card_frames = candidate.card_frames or (frame,)
+        materialized_pages: list[MaterializedPage] = []
+        for card_frame in card_frames:
+            frame_naid = card_frame.object_id or f"{candidate.roll.naid}-frame-{card_frame.frame_number}"
+            try:
+                materialized = await materialize_digital_object(
+                    job_id,
+                    frame_naid,
+                    card_frame.frame_number - 1,
+                    card_frame.raw,
+                    is_relevant=card_frame.frame_number == frame.frame_number,
+                    extract_ocr=False,
+                )
+            except Exception as exc:
+                warnings.append(f"{candidate.roll.collection} {candidate.roll.box}, Frame {card_frame.frame_number}: {exc}")
+                continue
+            if materialized.warning:
+                warnings.append(f"{candidate.roll.collection} {candidate.roll.box}, Frame {card_frame.frame_number}: {materialized.warning}")
+            materialized_pages.append(materialized)
+        if not materialized_pages:
             continue
-        if materialized.warning:
-            warnings.append(f"{candidate.roll.collection} {candidate.roll.box}, Frame {frame.frame_number}: {materialized.warning}")
         with session_scope() as session:
             job = session.get(SearchJob, job_id)
             if job is None or job.status == "cancelled":
                 return stored, warnings
-            stored += store_nsdap_candidate(session, job, payload, candidate, materialized)
+            stored += store_nsdap_candidate(session, job, payload, candidate, materialized_pages)
     return stored, warnings
 
 
@@ -675,7 +683,7 @@ def store_nsdap_candidate(
     job: SearchJob,
     payload: SearchRequest,
     candidate: NsdapCandidate,
-    materialized_page: MaterializedPage,
+    materialized_pages: list[MaterializedPage],
 ) -> int:
     frame = candidate.frame
     roll = candidate.roll
@@ -705,11 +713,21 @@ def store_nsdap_candidate(
             "retrieval_strategy": candidate.frame_match.strategy,
             "matched_variants": list(candidate.frame_match.matched_variants),
             "highlight_terms": build_a3340_highlight_terms(payload, candidate.frame_match),
+            "matched_fields": build_a3340_matched_fields(payload, candidate.frame_match),
+            "card_frames": [
+                {
+                    "frame": card_frame.frame_number,
+                    "object_filename": card_frame.object_filename,
+                    "object_url": card_frame.object_url,
+                }
+                for card_frame in (candidate.card_frames or (frame,))
+            ],
         },
     )
     session.add(record)
     session.flush()
-    page = add_materialized_page(session, record, materialized_page)
+    pages = add_materialized_pages(session, record, materialized_pages)
+    page = next((item for item in pages if item.is_relevant), pages[0] if pages else None)
     score = candidate.frame_match.retrieval_score
     result = SearchResult(
         job_id=job.id,
@@ -717,7 +735,7 @@ def store_nsdap_candidate(
         match_score=score,
         category=category_for_score(score),
         suspected_person_name=build_job_title(payload),
-        relevant_pages_count=1,
+        relevant_pages_count=len(pages),
     )
     session.add(result)
     session.flush()
@@ -728,6 +746,16 @@ def store_nsdap_candidate(
     ]
     if page and page.local_path:
         evidence_items.append(("positive", "Kartenbild lokal für Browseransicht materialisiert", page.original_url, 0.0, "NARA Originalbild"))
+    if len(pages) > 1:
+        evidence_items.append(
+            (
+                "positive",
+                "Zusammenhängende Kartenansichten",
+                f"{len(pages)} aufeinanderfolgende Frames (Vorderseite, Rückseite und Fortsetzungen soweit im Rollenindex erkennbar).",
+                0.0,
+                "NARA A3340 Roll-JSON",
+            )
+        )
     for kind, label, detail, delta, source_type in evidence_items:
         session.add(
             MatchEvidence(
@@ -755,6 +783,38 @@ def build_a3340_highlight_terms(payload: SearchRequest, match: FrameMatch) -> li
         *(line.strip() for line in (payload.variants or "").splitlines()),
     ]
     return dedupe_query_terms(values)
+
+
+def build_a3340_matched_fields(payload: SearchRequest, match: FrameMatch) -> list[dict[str, str]]:
+    """Keep only query fields that the matched A3340 frame actually supports."""
+    text = match.frame.extracted_text or ""
+    normalized_text = normalize_text(text)
+    fields: list[tuple[str, str]] = []
+    if payload.first_name and normalize_text(payload.first_name) in normalized_text:
+        fields.append(("Vorname", payload.first_name))
+    if payload.last_name and normalize_text(payload.last_name) in normalized_text:
+        fields.append(("Nachname", payload.last_name))
+    if payload.membership_number and frame_contains_membership_number(text, payload.membership_number):
+        fields.append(("Mitgliedsnummer", payload.membership_number))
+    for variant in payload.variants.splitlines() if payload.variants else []:
+        value = variant.strip()
+        if value and normalize_text(value) in normalized_text:
+            fields.append(("Namensvariante", value))
+
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for label, value in fields:
+        key = f"{label}:{value.casefold()}"
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({"label": label, "value": value, "term": value, "source": "NARA A3340 Extracted Text"})
+    return result
+
+
+def frame_contains_membership_number(text: str, membership_number: str) -> bool:
+    needle = re.sub(r"\D+", "", membership_number)
+    return bool(needle and needle in re.sub(r"\D+", "", text))
 
 
 def store_nara_candidate(
@@ -1478,6 +1538,12 @@ def serialize_result(result: SearchResult) -> SearchResultResponse:
             value
             for value in record.raw_metadata.get("highlight_terms", [])
             if isinstance(value, str) and value.strip()
+        ],
+        matched_fields=[
+            MatchedFieldResponse(**field)
+            for field in record.raw_metadata.get("matched_fields", [])
+            if isinstance(field, dict)
+            and all(isinstance(field.get(key), str) and field[key].strip() for key in ("label", "value", "term", "source"))
         ],
         evidences=[
             MatchEvidenceResponse(

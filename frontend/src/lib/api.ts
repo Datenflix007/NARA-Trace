@@ -85,6 +85,13 @@ export type PageHitRegionResponse = {
   height: number;
 };
 
+export type MatchedFieldResponse = {
+  label: string;
+  value: string;
+  term: string;
+  source: string;
+};
+
 export type SearchResultResponse = {
   id: number;
   job_id: string;
@@ -111,6 +118,7 @@ export type SearchResultResponse = {
   media_pages?: ResultMediaPageResponse[];
   record_years?: number[];
   highlight_terms?: string[];
+  matched_fields?: MatchedFieldResponse[];
   evidences: MatchEvidenceResponse[];
 };
 

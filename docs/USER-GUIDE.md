@@ -29,6 +29,24 @@ Oder unter Windows direkt:
 
 Der Befehl ist fortsetzbar; nur noch nicht indexierte Rollen werden geladen. `--refresh-a3340-index` baut den Textindex bewusst neu auf. `.\quickstart.bat all` indiziert zuerst und startet anschließend die Anwendung.
 
+## Bulk-Download der offiziellen Rohdaten
+
+Der A3340-Datensatz liegt laut NARA oeffentlich im AWS-S3-Bucket `s3://nara-nsdap` (Region `us-east-2`). Fuer die Recherche ist der eingebaute Gesamtindex normalerweise vorzuziehen: Er uebernimmt die JSON-Metadaten samt OCR, aber keine Bildmassen.
+
+Wenn ein eigener Rohdatenbestand benoetigt wird, bereitet dieses Skript einen fortsetzbaren AWS-CLI-Sync vor (AWS CLI v2 erforderlich):
+
+```powershell
+.\scripts\bulk-nsdap.ps1 -Destination D:\NARATrace-NSDAP -Mode Metadata
+```
+
+`Metadata` laedt nur JSON-Dateien. Ein Vollsync mit TIFFs und PDFs wird erst mit zwei bewussten Argumenten freigegeben:
+
+```powershell
+.\scripts\bulk-nsdap.ps1 -Destination E:\NARATrace-NSDAP-vollbestand -Mode FullDataset -ConfirmFullDataset
+```
+
+Der Vollbestand ist sehr gross; NARA empfiehlt dafuer externen Speicher. Diese Bulk-Aktion startet keinen NARA-Catalog-API-Abruf und braucht keinen persoenlichen API-Schluessel.
+
 ## Suche anlegen
 
 1. Öffne **Neue Suche** und trage mindestens einen Nachnamen ein.

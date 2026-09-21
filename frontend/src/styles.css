@@ -1043,6 +1043,52 @@ textarea {
   font-weight: 800;
 }
 
+.card-view-strip {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 12px;
+  padding: 10px;
+  border: 1px solid #cad2cf;
+  border-radius: 6px;
+  background: #f6f8f7;
+}
+
+.card-view-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.card-view-button {
+  display: grid;
+  gap: 2px;
+  min-width: 118px;
+  padding: 8px 10px;
+  border: 1px solid #aebbb7;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #273130;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-view-button strong {
+  font-size: 13px;
+}
+
+.card-view-button span {
+  color: #5f6868;
+  font-size: 12px;
+}
+
+.card-view-button:hover,
+.card-view-button:focus-visible,
+.card-view-button.selected {
+  border-color: #207c75;
+  background: #e4f2ef;
+  outline: none;
+}
+
 .interactive-media-stage {
   display: grid;
   place-items: center;
@@ -1150,6 +1196,22 @@ textarea {
 
 .image-hit-line {
   border-color: #d8c46a;
+}
+
+.matched-fields {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+  border-top: 1px solid #d9e0de;
+  border-bottom: 1px solid #d9e0de;
+  padding: 14px 0;
+}
+
+.matched-fields > p {
+  margin: 0;
+  color: #5f6868;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .identity-grid {

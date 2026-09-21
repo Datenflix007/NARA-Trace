@@ -1,5 +1,9 @@
 # NARA-Trace Roadmap
 
+Aktualisierung 2026-09-21: A3340-Kartenansichten werden als zusammenhaengende Folge gespeichert und dargestellt. Lokale TIFFs werden vor der Auslieferung in browserfaehige JPEGs umgewandelt; die Ansicht schaltet sichtbar zwischen Vorderseite, Rueckseite und weiteren Folgeframes.
+
+Aktualisierung 2026-09-21: Der offizielle AWS-Open-Data-Bucket ist als regionaler Roll-JSON-Endpunkt eingebunden. Eine getrennte, abgesicherte Bulk-Aktion kann nur Metadaten/OCR oder nach expliziter Bestaetigung den Vollbestand synchronisieren.
+
 Stand: 2026-09-20. Diese Datei ist der verbindliche Einstiegspunkt für die nächste Sitzung. Nach jedem abgeschlossenen Teilabschnitt müssen Tests, Dokumentation und dieser Status aktualisiert werden.
 
 ## Projektziel

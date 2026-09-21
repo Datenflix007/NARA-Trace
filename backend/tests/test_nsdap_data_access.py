@@ -6,7 +6,7 @@ from naratrace.api.schemas import SearchRequest
 from naratrace.nsdap.frame_search import search_frames
 from naratrace.nsdap.manifest import parse_manifest
 from naratrace.nsdap.models import NsdapFrame
-from naratrace.nsdap.roll_loader import parse_roll_document, roll_json_url
+from naratrace.nsdap.roll_loader import S3_HTTP_BASE, parse_roll_document, roll_json_url
 from naratrace.processing.nsdap_candidates import number_matches
 from naratrace.processing.nsdap_candidates import retrieve_nsdap_candidates
 
@@ -26,6 +26,7 @@ def test_manifest_parses_official_field_shape_and_preserves_provenance():
 
     assert rolls[0].naid == "593495034"
     assert rolls[0].range_start == "Schultze, Paul"
+    assert roll_json_url(rolls[0]).startswith(S3_HTTP_BASE)
     assert roll_json_url(rolls[0]).endswith("A3340-MFKL-R0014/593495034.json")
 
 
@@ -159,6 +160,12 @@ async def test_retrieval_passes_every_mfkl_and_mfok_roll_to_the_corpus_index(mon
 
         def search_frames(self, received_rolls, *, surname, membership_number):
             assert list(received_rolls) == self.received_rolls
+            assert surname == "Schultze-Naumburg"
+            return [frame]
+
+        def card_context_frames(self, received_roll, received_frame, *, surname, membership_number):
+            assert received_roll == frame.roll
+            assert received_frame == frame
             assert surname == "Schultze-Naumburg"
             return [frame]
 

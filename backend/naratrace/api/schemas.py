@@ -114,6 +114,15 @@ class PageHitRegionResponse(BaseModel):
     height: float = Field(gt=0, le=100)
 
 
+class MatchedFieldResponse(BaseModel):
+    """A query field that was verified in the returned A3340 frame metadata."""
+
+    label: str
+    value: str
+    term: str
+    source: str
+
+
 class ResultMediaPageResponse(BaseModel):
     page_id: int
     page_number: int
@@ -154,6 +163,7 @@ class SearchResultResponse(BaseModel):
     media_pages: list[ResultMediaPageResponse] = Field(default_factory=list)
     record_years: list[int] = Field(default_factory=list)
     highlight_terms: list[str] = Field(default_factory=list)
+    matched_fields: list[MatchedFieldResponse] = Field(default_factory=list)
     evidences: list[MatchEvidenceResponse]
 
 

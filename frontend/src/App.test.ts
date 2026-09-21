@@ -1088,9 +1088,30 @@ describe('App', () => {
           transcript_text: 'Paul Schultze-Naumburg membership number 347 541',
           transcript_source: 'local OCR',
           transcript_edited: false
+        },
+        {
+          page_id: 43,
+          page_number: 2,
+          label: 'A3340 MFKL R0013 - card frame 2948',
+          media_url: '/api/pages/43/media',
+          media_type: 'image',
+          original_url: null,
+          thumbnail_url: '/api/pages/43/media',
+          mime_type: 'image/jpeg',
+          transcript_text: 'Paul Schultze-Naumburg membership number 347 541',
+          transcript_source: 'local OCR',
+          transcript_edited: false
         }
       ],
-      highlight_terms: ['Paul', '347541']
+      highlight_terms: ['Paul', '347541'],
+      matched_fields: [
+        {
+          label: 'Mitgliedsnummer',
+          value: '347541',
+          term: '347541',
+          source: 'NARA A3340 Extracted Text'
+        }
+      ]
     });
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
@@ -1112,6 +1133,9 @@ describe('App', () => {
           ]
         } as Response;
       }
+      if (url.startsWith('/api/pages/43/highlights?')) {
+        return { ok: true, json: async () => [] } as Response;
+      }
       return new Response('{}', { status: 404 });
     });
 
@@ -1124,6 +1148,11 @@ describe('App', () => {
     await fireEvent.click(screen.getByRole('button', { name: /A3340 MFKL R0013/ }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/pages/42/highlights?terms=Paul&terms=347541'));
+    expect(screen.getByLabelText('Kartenansichten')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Vorderseite.*2947/ })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: /Rückseite.*2948/ }));
+    expect(screen.getByRole('heading', { name: 'A3340 MFKL R0013 - card frame 2948' })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: /Vorderseite.*2947/ }));
     await waitFor(() => expect(screen.getByText('Treffer auf der Originalseite')).toBeTruthy());
     const imageHitControl = screen.getByRole('button', { name: /Treffer im Bild Paul/ });
     const imageHotspot = screen.getByRole('button', { name: 'Treffer Paul' });
@@ -1132,5 +1161,10 @@ describe('App', () => {
     expect(imageHotspot.classList.contains('active')).toBe(true);
     expect(imageHotspot.getAttribute('style')).toContain('left: 25%');
     expect(fetchMock).toHaveBeenCalledWith('/api/pages/42/highlights?terms=Paul&terms=347541');
+
+    const metadataControl = screen.getByRole('button', { name: /Mitgliedsnummer.*347541/ });
+    const membershipHotspot = screen.getByRole('button', { name: 'Treffer 347541' });
+    await fireEvent.mouseEnter(metadataControl);
+    expect(membershipHotspot.classList.contains('active')).toBe(true);
   });
 });

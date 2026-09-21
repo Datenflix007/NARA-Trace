@@ -121,3 +121,22 @@ async def test_frame_index_bounds_parallel_roll_requests(tmp_path):
 
 def test_number_term_extraction_keeps_fields_separate():
     assert extract_number_terms("Mitgl. No. 347 541, andere Nr. 12-345") == ["347541", "12345"]
+
+
+@pytest.mark.asyncio
+async def test_card_context_keeps_all_views_until_the_next_card_header(tmp_path):
+    roll = make_roll("roll-schultze", "MFKL", "R0013")
+    frames = [
+        NsdapFrame(roll, 2947, "2947", "2947.tif", "https://example.invalid/2947.tif", "Name: Paul Schultze-Naumburg Mitgl. No. 347 541", {}),
+        NsdapFrame(roll, 2948, "2948", "2948.tif", "https://example.invalid/2948.tif", "Name: Paul Schultze-Naumburg Mitgl.-Nr. 347 541", {}),
+        NsdapFrame(roll, 2949, "2949", "2949.tif", "https://example.invalid/2949.tif", "Monatsmeldg. Gau", {}),
+        NsdapFrame(roll, 2950, "2950", "2950.tif", "https://example.invalid/2950.tif", "Mitgliedskarte ausgestellt am", {}),
+        NsdapFrame(roll, 2951, "2951", "2951.tif", "https://example.invalid/2951.tif", "", {}),
+        NsdapFrame(roll, 2952, "2952", "2952.tif", "https://example.invalid/2952.tif", "Name: Andere Person Mitgl. No. 991122", {}),
+    ]
+    index = NsdapFrameIndex(tmp_path / "nsdap-frames.sqlite3")
+    await index.build_all([roll], loader=FakeRollLoader({roll.naid: frames}))
+
+    context = index.card_context_frames(roll, frames[1], surname="Schultze-Naumburg", membership_number="347541")
+
+    assert [frame.frame_number for frame in context] == [2947, 2948, 2949, 2950, 2951]

@@ -16,6 +16,8 @@ from naratrace.nsdap.roll_loader import NsdapRollLoader
 
 INDEX_FILE_NAME = "nsdap-frames.sqlite3"
 INDEX_VERSION = "1"
+MAX_CARD_CONTEXT_FRAMES = 12
+CARD_CONTEXT_LOOKBACK = 4
 
 
 @dataclass(frozen=True)
@@ -156,6 +158,73 @@ class NsdapFrameIndex:
             version_row = connection.execute("SELECT value FROM nsdap_index_metadata WHERE key = 'version'").fetchone()
         return count, str(version_row[0]) if version_row else None
 
+    def card_context_frames(
+        self,
+        roll: NsdapRoll,
+        frame: NsdapFrame,
+        *,
+        surname: str,
+        membership_number: str | None,
+    ) -> list[NsdapFrame]:
+        """Return the contiguous card views belonging to a retrieved frame.
+
+        The A3340 roll JSON describes one scan at a time, not a card object with
+        an explicit page list.  A card can therefore span several consecutive
+        scans (front, reverse, continuation).  We start at the closest card
+        header before the matched scan and retain following scans until a new,
+        non-matching card header begins.  The result is deliberately bounded
+        and never crosses a roll boundary.
+        """
+        self._ensure_schema()
+        lower = max(1, frame.frame_number - CARD_CONTEXT_LOOKBACK)
+        upper = frame.frame_number + MAX_CARD_CONTEXT_FRAMES - 1
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT frame_number, object_id, object_filename, object_url, extracted_text "
+                "FROM nsdap_frames_fts "
+                "WHERE roll_naid = ? AND frame_number BETWEEN ? AND ? "
+                "ORDER BY frame_number",
+                (roll.naid, lower, upper),
+            ).fetchall()
+        nearby = [self._frame_from_row(roll, row) for row in rows]
+        if not nearby:
+            return [frame]
+
+        header_positions = [
+            index
+            for index, item in enumerate(nearby)
+            if item.frame_number <= frame.frame_number and looks_like_card_header(item.extracted_text or "")
+        ]
+        start_index = header_positions[-1] if header_positions else next(
+            (index for index, item in enumerate(nearby) if item.frame_number == frame.frame_number),
+            0,
+        )
+        # A reverse side can repeat the form's ``Name`` header.  Keep walking
+        # back over matching headers so selecting that reverse side still opens
+        # the card from its first available view.
+        while start_index > 0:
+            previous_headers = [
+                index
+                for index, item in enumerate(nearby[:start_index])
+                if looks_like_card_header(item.extracted_text or "")
+            ]
+            if not previous_headers:
+                break
+            previous_index = previous_headers[-1]
+            if not frame_matches_identity(nearby[previous_index], surname=surname, membership_number=membership_number):
+                break
+            start_index = previous_index
+        context: list[NsdapFrame] = []
+        for index, item in enumerate(nearby[start_index:]):
+            if index and looks_like_card_header(item.extracted_text or "") and not frame_matches_identity(
+                item, surname=surname, membership_number=membership_number
+            ):
+                break
+            context.append(item)
+            if len(context) >= MAX_CARD_CONTEXT_FRAMES:
+                break
+        return context or [frame]
+
     def _stored_version(self) -> str | None:
         with self._connection() as connection:
             row = connection.execute("SELECT value FROM nsdap_index_metadata WHERE key = 'version'").fetchone()
@@ -207,6 +276,23 @@ class NsdapFrameIndex:
                 (roll.naid, roll.collection, roll.box, now),
             )
             connection.commit()
+
+    @staticmethod
+    def _frame_from_row(roll: NsdapRoll, row: sqlite3.Row) -> NsdapFrame:
+        return NsdapFrame(
+            roll=roll,
+            frame_number=int(row["frame_number"]),
+            object_id=optional_string(row["object_id"]),
+            object_filename=optional_string(row["object_filename"]),
+            object_url=optional_string(row["object_url"]),
+            extracted_text=optional_string(row["extracted_text"]),
+            raw={
+                "objectId": optional_string(row["object_id"]),
+                "objectFilename": optional_string(row["object_filename"]),
+                "objectUrl": optional_string(row["object_url"]),
+                "extractedText": optional_string(row["extracted_text"]),
+            },
+        )
 
     def _ensure_schema(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -272,6 +358,21 @@ def extract_number_terms(text: str) -> list[str]:
         if len(digits) >= 4 and digits not in values:
             values.append(digits)
     return values
+
+
+def frame_matches_identity(frame: NsdapFrame, *, surname: str, membership_number: str | None) -> bool:
+    text = frame.extracted_text or ""
+    digits = re.sub(r"\D+", "", membership_number or "")
+    if digits and digits in extract_number_terms(text):
+        return True
+    normalized_surname = NameNormalizer().normalize(surname)
+    return bool(normalized_surname and normalized_surname in NameNormalizer().normalize(text))
+
+
+def looks_like_card_header(text: str) -> bool:
+    """Recognize the form header that starts a new membership card scan."""
+    sample = text[:300]
+    return bool(re.search(r"\bname\s*[:.]?", sample, flags=re.IGNORECASE))
 
 
 def frame_key(roll_naid: str, frame_number: int) -> str:

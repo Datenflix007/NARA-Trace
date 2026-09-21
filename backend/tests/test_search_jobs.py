@@ -188,9 +188,23 @@ async def test_a3340_search_job_returns_one_concrete_card_frame_with_highlight_t
     )
     card_path = tmp_path / "A3340-MFKL-R0013-02947.display.jpg"
     Image.new("RGB", (48, 64), "white").save(card_path, format="JPEG")
+    reverse_frame = NsdapFrame(
+        roll=roll,
+        frame_number=2948,
+        object_id="593492948",
+        object_filename="A3340-MFKL-R0013-02948.tif",
+        object_url="https://catalog.archives.gov/medialz/dc-metro/rg-242/A3340-MFKL-R0013-02948.tif",
+        extracted_text="Mitgl.-Nr. 347 541 Aufnahme: 1.11.30",
+        raw={
+            "objectId": "593492948",
+            "objectFilename": "A3340-MFKL-R0013-02948.tif",
+            "objectUrl": "https://catalog.archives.gov/medialz/dc-metro/rg-242/A3340-MFKL-R0013-02948.tif",
+            "extractedText": "Mitgl.-Nr. 347 541 Aufnahme: 1.11.30",
+        },
+    )
 
     async def fake_retrieve_nsdap_candidates(payload):
-        return [NsdapCandidate(roll, FrameMatch(frame, 100.0, (), "membership_number_exact"))], ["A3340-Retrieval: MFKL R0013"]
+        return [NsdapCandidate(roll, FrameMatch(frame, 100.0, (), "membership_number_exact"), (frame, reverse_frame))], ["A3340-Retrieval: MFKL R0013"]
 
     async def fake_materialize_digital_object(job_id, naid, index, digital_object, is_relevant=True, extract_ocr=True):
         return MaterializedPage(
@@ -226,10 +240,24 @@ async def test_a3340_search_job_returns_one_concrete_card_frame_with_highlight_t
             assert results[0]["source_page_url"].startswith("/api/pages/")
             assert results[0]["transcript_text"] == "Mitgl. No. 347 541 Aufnahme: 1.11.30"
             assert {"Paul", "Schultze-Naumburg", "347541"}.issubset(results[0]["highlight_terms"])
+            assert results[0]["relevant_pages_count"] == 2
+            assert [page["page_number"] for page in results[0]["media_pages"]] == [2947, 2948]
+            assert all(page["media_url"].endswith("/media") for page in results[0]["media_pages"])
+            assert results[0]["matched_fields"] == [
+                {
+                    "label": "Mitgliedsnummer",
+                    "value": "347541",
+                    "term": "347541",
+                    "source": "NARA A3340 Extracted Text",
+                }
+            ]
 
             image_response = await client.get(results[0]["source_page_url"])
             assert image_response.status_code == 200
             assert image_response.headers["content-type"] == "image/jpeg"
+            media_response = await client.get(results[0]["media_pages"][0]["media_url"])
+            assert media_response.status_code == 200
+            assert media_response.headers["content-type"] == "image/jpeg"
 
 
 @pytest.mark.asyncio
