@@ -229,44 +229,6 @@ Besonders relevant sind deshalb auch Informationen, die **gegen** eine Zuordnung
 
 ---
 
-# Arbeitsansichten
-
-## Neue Suche
-
-Das Suchformular nimmt neben dem Namen zusätzliche Hinweise auf:
-
-* Namensvarianten,
-* Lebensdaten,
-* Orte,
-* Mitgliedsnummern und
-* archivische Eingrenzungen.
-
-Suchjobs laufen im Hintergrund und zeigen ihren aktuellen Fortschritt.
-
-![Suchformular mit ausgefülltem Suchprofil](docs/screenshots/02-search-form.png)
-
----
-
-## Lokale Dokumente
-
-Neben NARA-Daten können auch eigene PDF-, Bild- und TIFF-Dateien untersucht werden.
-
-NARATrace erstellt dafür eine lokale Vorschau, führt OCR aus und kann relevante Begriffe im Dokument hervorheben.
-
-Diese Dokumente bleiben von den NARA-Treffern getrennt.
-
-![Lokale Dokumentanalyse mit Vorschau und OCR](docs/screenshots/03-local-documents.png)
-
----
-
-## Methodik
-
-Ein eigener Methodikbereich erläutert den Weg vom Suchprofil über Retrieval und Ranking bis zur Prüfung des Originals.
-
-![Methodik-Reiter mit Workflow-Schema](docs/screenshots/04-methodology.png)
-
----
-
 # Installation
 
 Dieser Teil richtet sich an Personen, die NARATrace lokal installieren oder weiterentwickeln möchten.
