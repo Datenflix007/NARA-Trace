@@ -123,7 +123,7 @@ describe('App', () => {
     render(App);
 
     await waitFor(() => {
-      expect(screen.getByText('NARA API: 1,2 % (123/10000)')).toBeTruthy();
+      expect(screen.getByText('Catalog API (lokal): 1,2 % (123/10000)')).toBeTruthy();
     });
   });
 

@@ -13,6 +13,7 @@
   "dependencies": {
     "@datenflix/ts-text-marker-viewer": "file:../../TS_TextMarkerViewer",
     "@datenflix007/ts-text-marker-core": "file:../../TS_TextMarkerCore",
+    "marked": "^18.0.14",
     "svelte": "5.56.8"
   },
   "devDependencies": {
