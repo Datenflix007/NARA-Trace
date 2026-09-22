@@ -1,13 +1,14 @@
 import json
 
+import httpx
 import pytest
 
 from naratrace.api.schemas import SearchRequest
 from naratrace.nsdap.frame_search import search_frames
-from naratrace.nsdap.manifest import parse_manifest
-from naratrace.nsdap.models import NsdapFrame
-from naratrace.nsdap.roll_loader import S3_HTTP_BASE, parse_roll_document, roll_json_url
-from naratrace.processing.nsdap_candidates import number_matches
+from naratrace.nsdap.manifest import NsdapDataError, parse_manifest
+from naratrace.nsdap.models import FrameMatch, NsdapFrame
+from naratrace.nsdap.roll_loader import NsdapRollLoader, S3_HTTP_BASE, parse_roll_document, roll_json_url
+from naratrace.processing.nsdap_candidates import NsdapCandidate, dedupe_card_sequences, number_matches
 from naratrace.processing.nsdap_candidates import retrieve_nsdap_candidates
 
 
@@ -63,6 +64,57 @@ def test_roll_document_keeps_object_filename_text_and_original_url():
     assert frames[0].object_filename == "A3340-MFKL-R0014-00010.tif"
     assert frames[0].extracted_text == "Name: Schultze Paul"
     assert frames[0].object_url == "https://example.invalid/A3340-MFKL-R0014-00010.tif"
+
+
+@pytest.mark.asyncio
+async def test_roll_loader_retries_temporary_s3_responses_but_not_a_missing_object():
+    roll = parse_manifest(
+        [
+            {
+                "id": "593495034",
+                "agency": "MFKL",
+                "box": "R0014",
+                "title": "Schultze, Paul - Schultze, Robert",
+                "s3": "s3://nara-nsdap/A3340-MFKL/A3340-MFKL-R0014",
+            }
+        ]
+    )[0]
+    document = {"_source": {"record": {"digitalObjects": [{"objectFilename": "one.tif"}]}}}
+    requests = 0
+
+    def temporary_failure_then_success(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        if requests == 1:
+            return httpx.Response(503, request=request)
+        return httpx.Response(200, json=document, request=request)
+
+    loader = NsdapRollLoader(reuse_connections=True, retry_attempts=2, retry_delay_seconds=0)
+    loader._client = httpx.AsyncClient(transport=httpx.MockTransport(temporary_failure_then_success))
+    try:
+        frames = await loader.load_frames(roll, refresh=True)
+    finally:
+        await loader.aclose()
+
+    assert requests == 2
+    assert frames[0].object_filename == "one.tif"
+
+    missing_requests = 0
+
+    def missing_object(request: httpx.Request) -> httpx.Response:
+        nonlocal missing_requests
+        missing_requests += 1
+        return httpx.Response(404, request=request)
+
+    missing_loader = NsdapRollLoader(reuse_connections=True, retry_attempts=4, retry_delay_seconds=0)
+    missing_loader._client = httpx.AsyncClient(transport=httpx.MockTransport(missing_object))
+    try:
+        with pytest.raises(NsdapDataError, match="404"):
+            await missing_loader.load_frames(roll, refresh=True)
+    finally:
+        await missing_loader.aclose()
+
+    assert missing_requests == 1
 
 
 def test_frame_retrieval_records_strategy_without_claiming_identity():
@@ -121,7 +173,34 @@ def test_membership_number_retrieval_finds_the_concrete_card_frame():
     assert len(candidates) == 1
     assert candidates[0].frame.frame_number == 1
     assert candidates[0].frame_match.strategy == "membership_number_exact"
-    assert candidates[0].frame_match.retrieval_score == 100.0
+    assert candidates[0].frame_match.retrieval_score == 88.0
+
+
+def test_card_sequence_deduplication_keeps_front_and_reverse_as_one_result():
+    roll = parse_manifest(
+        [
+            {
+                "id": "593495034",
+                "agency": "MFKL",
+                "box": "R0014",
+                "title": "Schultze, Paul - Schultze, Robert",
+                "s3": "s3://nara-nsdap/A3340-MFKL/A3340-MFKL-R0014",
+            }
+        ]
+    )[0]
+    front = NsdapFrame(roll, 10, "front", "front.tif", "https://example.invalid/front.tif", "Name: Paul", {})
+    reverse = NsdapFrame(roll, 11, "reverse", "reverse.tif", "https://example.invalid/reverse.tif", "Mitgl. No. 347541", {})
+    card_frames = (front, reverse)
+
+    deduplicated = dedupe_card_sequences(
+        [
+            NsdapCandidate(roll, FrameMatch(front, 98.0, (), "name+number"), card_frames),
+            NsdapCandidate(roll, FrameMatch(reverse, 95.0, (), "membership_number_exact"), card_frames),
+        ]
+    )
+
+    assert len(deduplicated) == 1
+    assert deduplicated[0].card_frames == card_frames
 
 
 @pytest.mark.asyncio

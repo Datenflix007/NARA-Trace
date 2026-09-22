@@ -28,7 +28,7 @@ from naratrace.core.secrets import (
     get_nara_api_key_status,
     set_nara_api_key,
 )
-from naratrace.export.research_report import build_search_report_markdown
+from naratrace.export.research_report import build_search_report_html, build_search_report_markdown, build_search_report_pdf
 from naratrace.nara.client import NaraCatalogClient, NaraClientError
 from naratrace.nara.usage import NaraApiUsage, get_nara_api_usage
 from naratrace.processing.local_documents import analyze_local_document_upload, get_local_document_image_path
@@ -142,6 +142,29 @@ async def export_search_report(job_id: str) -> Response:
     return Response(
         content=content,
         media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@api_router.get("/search/{job_id}/export")
+async def export_search_report_in_format(job_id: str, format: str = "pdf") -> Response:
+    if format == "pdf":
+        report = build_search_report_pdf(job_id)
+        media_type = "application/pdf"
+    elif format == "html":
+        report = build_search_report_html(job_id)
+        media_type = "text/html; charset=utf-8"
+    elif format == "markdown":
+        report = build_search_report_markdown(job_id)
+        media_type = "text/markdown; charset=utf-8"
+    else:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Exportformat muss pdf, html oder markdown sein.")
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suchjob wurde nicht gefunden.")
+    filename, content = report
+    return Response(
+        content=content,
+        media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -14,12 +15,23 @@ from naratrace.nsdap.models import NsdapFrame, NsdapRoll
 # The Registry of Open Data lists the NSDAP bucket in us-east-2.  The
 # region-specific endpoint avoids relying on a legacy global S3 redirect.
 S3_HTTP_BASE = "https://nara-nsdap.s3.us-east-2.amazonaws.com"
+DEFAULT_RETRY_ATTEMPTS = 4
+DEFAULT_RETRY_DELAY_SECONDS = 0.5
 
 
 class NsdapRollLoader:
-    def __init__(self, timeout_seconds: float = 60.0, *, reuse_connections: bool = False) -> None:
+    def __init__(
+        self,
+        timeout_seconds: float = 60.0,
+        *,
+        reuse_connections: bool = False,
+        retry_attempts: int = DEFAULT_RETRY_ATTEMPTS,
+        retry_delay_seconds: float = DEFAULT_RETRY_DELAY_SECONDS,
+    ) -> None:
         self.timeout = httpx.Timeout(timeout_seconds, connect=10.0)
         self.reuse_connections = reuse_connections
+        self.retry_attempts = max(1, retry_attempts)
+        self.retry_delay_seconds = max(0.0, retry_delay_seconds)
         self._client: httpx.AsyncClient | None = None
 
     async def load_frames(self, roll: NsdapRoll, refresh: bool = False) -> list[NsdapFrame]:
@@ -45,18 +57,36 @@ class NsdapRollLoader:
             self._client = None
 
     async def _get_response(self, url: str, roll: NsdapRoll) -> httpx.Response:
-        try:
-            if self.reuse_connections:
-                client = self._shared_client()
-                response = await client.get(url)
+        last_error: httpx.HTTPError | None = None
+        for attempt in range(self.retry_attempts):
+            try:
+                if self.reuse_connections:
+                    client = self._shared_client()
+                    response = await client.get(url)
+                else:
+                    async with self._new_client() as client:
+                        response = await client.get(url)
                 response.raise_for_status()
                 return response
-            async with self._new_client() as client:
-                response = await client.get(url)
-                response.raise_for_status()
-                return response
-        except httpx.HTTPError as exc:
-            raise NsdapDataError(f"Roll-JSON für {roll.collection} {roll.box} ist nicht erreichbar: {exc}") from exc
+            except httpx.HTTPStatusError as exc:
+                # A 404 is a real upstream gap (such as a manifest entry whose
+                # object has not been published), not a condition a retry can
+                # repair. Temporary S3/server responses are retried below.
+                if not retryable_status(exc.response.status_code):
+                    raise NsdapDataError(
+                        f"Roll-JSON für {roll.collection} {roll.box} ist nicht erreichbar: {exc}"
+                    ) from exc
+                last_error = exc
+            except httpx.RequestError as exc:
+                last_error = exc
+
+            if attempt < self.retry_attempts - 1:
+                await asyncio.sleep(self.retry_delay_seconds * (2**attempt))
+
+        assert last_error is not None
+        raise NsdapDataError(
+            f"Roll-JSON für {roll.collection} {roll.box} ist nach {self.retry_attempts} Versuchen nicht erreichbar: {last_error}"
+        ) from last_error
 
     def _shared_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -76,6 +106,10 @@ def roll_json_url(roll: NsdapRoll) -> str:
     if not path or path.startswith("s3://"):
         raise ValueError("NSDAP-Rollenpfad gehört nicht zum erwarteten öffentlichen NARA-Bucket.")
     return f"{S3_HTTP_BASE}/{path}/{roll.naid}.json"
+
+
+def retryable_status(status_code: int) -> bool:
+    return status_code in {408, 429} or 500 <= status_code <= 599
 
 
 def get_roll_cache_path(roll: NsdapRoll) -> Path:

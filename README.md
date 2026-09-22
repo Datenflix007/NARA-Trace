@@ -1,134 +1,289 @@
 # NARATrace
 
-> **Vom Namen zur überprüfbaren Karte.** NARATrace unterstützt historische Recherche in digitalisierten NARA-Beständen – lokal, nachvollziehbar und mit dem Original immer im Blick.
+> **Vom Namen zum überprüfbaren Kartenframe.**
+> NARATrace unterstützt die Recherche in digitalisierten NSDAP-Mitgliederunterlagen der U.S. National Archives – vom ersten Namenshinweis bis zur Prüfung am Original.
 
-![NARATrace: Startseite mit Anzeige-Beispiel](docs/screenshots/01-start.png)
 
-Lokale, quellennahe Personensuche und Dokumentprüfung für historische Arbeit mit dem National Archives Catalog.
 
-NARATrace ist ein unabhängiges, inoffizielles Forschungswerkzeug für digitalisierte Bestände der U.S. National Archives and Records Administration (NARA). Die Anwendung läuft lokal auf dem Rechner des Benutzers. Es gibt kein Cloud-Backend, keine Telemetrie und kein GitHub-Pages-Deployment.
+https://github.com/user-attachments/assets/60d13918-8b2c-413a-93c0-5a7083d261a9
 
-Automatische Treffer sind Forschungshinweise und keine gesicherten Identifizierungen.
 
-## Für die historische Recherche
 
-Eine Namenssuche ist noch kein Personenbeweis. NARATrace hilft dabei, die Arbeit zwischen erstem Hinweis und quellenkritischer Prüfung zu organisieren: Suchvarianten festhalten, mögliche Kartenframes eingrenzen, OCR-Text mit dem Original vergleichen und die Gründe für oder gegen eine Zuordnung dokumentieren.
+<p align="center">
+  <strong>Lokale A3340-Recherche</strong> ·
+  <strong>NARA-Provenienz pro Frame</strong> ·
+  <strong>SQLite-Volltextindex</strong> ·
+  <strong>Kartenpaar-Ansicht</strong>
+</p>
 
-| Im Mittelpunkt | Was NARATrace dazu beiträgt |
-| --- | --- |
-| **Personen und Namen** | Varianten, Schreibweisen, Lebensdaten, Orte und Mitgliedsnummern werden als Suchprofil festgehalten. |
-| **Archivische Herkunft** | Treffer bleiben mit Rolle, Frame, NARA-Quelle und Fundkontext verbunden. |
-| **Quellenkritik** | Evidenzhinweise und Widersprüche machen eine Zuordnung prüfbar statt nur plausibel. |
-| **Eigene Arbeitsunterlagen** | Lokale PDFs und Bilder können separat erschlossen werden, ohne sie mit NARA-Treffern zu verwechseln. |
+NARATrace ist ein lokales Forschungswerkzeug für die Suche nach Personen in digitalisierten Beständen des **National Archives Catalog** der U.S. National Archives and Records Administration (NARA).
 
-Maßgeblich bleiben die Originalkarte, ihr archivischer Kontext und eine nachvollziehbare Prüfung durch Forschende.
+Im Mittelpunkt steht nicht nur die Frage, **ob ein Name gefunden wird**, sondern auch, **woher ein Treffer stammt und wie er überprüft werden kann**. Treffer bleiben deshalb mit Mikrofilmrolle, Frame, NAID, Objektdatei, OCR-Text und Originalquelle verbunden.
 
-### Ein möglicher Arbeitsgang
+Die Anwendung läuft vollständig lokal. Es gibt kein Cloud-Backend und keine Telemetrie.
 
-1. **Frage formulieren:** Welche Person, welcher Ort, welches Datum oder welche Mitgliedsnummer wird gesucht?
-2. **Spuren vergleichen:** NARATrace sucht in den verfügbaren Beschreibungen und Texten nach passenden Kartenframes.
-3. **Am Original prüfen:** Bildseite, Transkript, Rolle und Frame werden nebeneinander gelesen – nicht nur ein Score.
-4. **Ergebnis festhalten:** Recherchebericht, Suchprofil und Evidenz ermöglichen die spätere Nachprüfung.
-
-### Einstieg nach Interesse
-
-- Für die Arbeit mit der Anwendung: [Nutzeranleitung](docs/USER-GUIDE.md)
-- Für Nachvollziehbarkeit und Grenzen: [Suchmethodik](docs/SEARCH-METHODOLOGY.md)
-- Für Bestand, Rolle und Frame: [NARA- und A3340-Datenarchitektur](docs/NARA_Architekture.md)
-- Für die technische Umsetzung: [TRAXER-Programmarchitektur](docs/TRAXER_Architekture.md)
-
-## Arbeitsansichten
-
-### Startseite und Anzeige-Beispiel
-
-Die Startseite zeigt direkt eine kompakte Demo-Trefferliste mit Quellenbadge, Trefferwahrscheinlichkeit und Personenfakten.
-Neue Nutzer sehen dort außerdem den Forschungsworkflow vom eigenen API-Schlüssel bis zum exportierbaren Recherchebericht.
-
-### Neue Suche
-
-Das Suchformular erfasst Namen, Varianten, Lebensdaten, Orte, Mitgliedsnummern und archivische Eingrenzungen. Suchjobs laufen im Hintergrund, zeigen Fortschritt und können abgebrochen werden.
-
-![Suchformular mit ausgefülltem Suchprofil](docs/screenshots/02-search-form.png)
-
-### Lokale Dokumente
-
-Lokale PDF-, Bild- und TIFF-Dateien können lokal analysiert werden. NARATrace erzeugt eine Browser-Vorschau, führt OCR aus und markiert Prüfbegriffe mit Fundstellen.
-
-![Lokale Dokumentanalyse mit Vorschau und OCR](docs/screenshots/03-local-documents.png)
-
-### Methodik
-
-Der Methodik-Reiter erklärt den Workflow von Suchprofil über Kandidatenabruf und OCR bis zur quellenkritischen Prüfung.
-
-![Methodik-Reiter mit Workflow-Schema](docs/screenshots/04-methodology.png)
-
-## Was die Anwendung für die Forschungsarbeit bereithält
-
-- Recherche und Arbeitsdaten bleiben auf dem eigenen Rechner
-- NARA-Suche mit einem lokal verwahrten persönlichen API-Schlüssel
-- Längere Suchläufe zeigen Fortschritt, Laufzeit, Restzeit und Abbruchmöglichkeit
-- gerankte Trefferlisten mit Evidenzhinweisen
-- Suchverläufe mit lokal gespeicherten Treffern
-- Dekadenübersicht für datierbare Treffer eines Suchlaufs
-- Markdown-Rechercheberichte mit Suchprofil, Abfragen, Treffer- und Evidenzdokumentation
-- Original- und Medienansicht mit Mehrseiten-Navigation, Zoom und Transkriptkorrektur
-- Lokale Dokumentprüfung für PDF-, Bild- und Scanmaterial
-- OCR-Fundstellen als Hilfe beim Lesen und Gegenprüfen, nicht als Ersatz für das Original
-- Methodikseite mit Workflow-Schema und Grenzen der automatischen Bewertung
-
-### Kartenansichten
-
-Bei A3340-Treffern speichert NARATrace die zusammenhaengenden Frames einer Karte in ihrer Reihenfolge. Browser erhalten lokale JPEG-Anzeigen statt eines TIFF-Downloads. Die Ansicht bietet direkte Schalter fuer Vorderseite, Rueckseite und weitere erkennbare Fortsetzungen; die Originalquelle bleibt am Treffer dokumentiert.
-
-### Offizieller AWS-Bulkzugang
-
-NARA verweist fuer A3340 auf den oeffentlichen Bucket `s3://nara-nsdap` in `us-east-2`. Der normale Gesamtindex ist die sichere Bulk-Aktion fuer die Suche: Er verarbeitet die Roll-JSON-Dateien mit OCR und Provenienz, laedt aber keine Millionen TIFFs. Fuer einen eigenstaendigen lokalen Rohdatenbestand gibt es ein bewusst getrenntes PowerShell-Skript (AWS CLI v2 erforderlich):
-
-```powershell
-.\scripts\bulk-nsdap.ps1 -Destination D:\NARATrace-NSDAP -Mode Metadata
-```
-
-Das ist fortsetzbar und laedt nur JSON, ist aber trotzdem deutlich groesser als der NARATrace-Index. Der Vollbestand mit TIFFs und PDFs verlangt die explizite zweite Bestaetigung, weil er sehr viel Speicher beansprucht:
-
-```powershell
-.\scripts\bulk-nsdap.ps1 -Destination E:\NARATrace-NSDAP-vollbestand -Mode FullDataset -ConfirmFullDataset
-```
-
-## Quellenbasis
-
-Datenquelle ist die U.S. National Archives and Records Administration - National Archives Catalog.
-
-NARATrace verwendet die National Archives Catalog API v2, sobald ein persönlicher API-Schlüssel gespeichert ist. Echte Suchergebnisse dürfen nicht erfunden werden. Demo- und Mock-Daten sind ausdrücklich gekennzeichnet.
-
-Die offizielle API-Dokumentation liegt unter:
-
-```text
-https://catalog.archives.gov/api/v2/api-docs/
-```
-
-Einen API-Schlüssel fordert man laut NARA über `Catalog_API@nara.gov` an.
+> [!IMPORTANT]
+> Ein automatisch gefundener Treffer ist zunächst ein **Recherchehinweis**.
+> Die Rangstärke bestimmt, welche Karte zuerst geprüft werden sollte. Sie ist **keine Wahrscheinlichkeit dafür, dass eine Person eindeutig identifiziert wurde**.
 
 ---
 
-## Technik und lokaler Betrieb
+## Von der Suche zur Karte
 
-Dieser Abschnitt richtet sich an Personen, die NARATrace selbst installieren, betreiben oder weiterentwickeln möchten.
+Der typische Rechercheweg ist bewusst kurz gehalten:
 
-### Lokaler Start
+![Animierter Ablauf: Suchprofil starten, Fortschritt verfolgen, Suchlauf im Verlauf öffnen und Kartenframe prüfen](docs/screenshots/search-to-history.gif)
 
-Voraussetzungen:
+1. **Suchprofil anlegen**
+   Name, Namensvarianten, Lebensdaten, Orte oder Mitgliedsnummer eingeben.
 
-- Python 3.11 oder neuer
-- Node.js 22 oder neuer
-- Tesseract OCR, wenn lokale OCR genutzt werden soll
+2. **Recherche starten**
+   NARATrace durchsucht den lokalen A3340-Index und weitere verfügbare NARA-Informationen.
 
-Backend installieren:
+3. **Kandidaten vergleichen**
+   Treffer werden anhand der vorhandenen Evidenz geordnet.
+
+4. **Karte prüfen**
+   Der konkrete Kartenframe wird zusammen mit OCR, Provenienz und Originalquelle angezeigt.
+
+5. **Recherche dokumentieren**
+   Suchprofil, Treffer und Evidenz können anschließend als Recherchebericht exportiert werden.
+
+---
+
+## Beispiel: Paul Schultze-Naumburg
+
+<p align="center">
+  <img src="frontend/public/demo/schultze-page-2.png" alt="Digitalisierter Kartenframe zu Paul Schultze-Naumburg" width="680" />
+</p>
+
+Bei einem Treffer speichert NARATrace nicht nur einen erkannten Namen. Zur Fundstelle gehören unter anderem:
+
+* Mikrofilmrolle,
+* Frame,
+* NAID,
+* NARA-Objektdatei,
+* NARA-URL,
+* vorhandener OCR-Text und
+* die beim Suchlauf verwendete Evidenz.
+
+Damit lässt sich nachvollziehen, **welche Information aus welcher Quelle stammt**.
+
+Zusammengehörige Scans können zusätzlich als **Kartenpaar** gelesen werden. Vorderseiten, Rückseiten und Fortsetzungen bleiben dadurch im Zusammenhang sichtbar.
+
+---
+
+# Wissenschaftlicher Rechercheprozess
+
+Eine historische Personensuche endet nicht mit einem guten Suchtreffer. Zwischen einer Namensübereinstimmung und einer belastbaren Identifizierung liegen mehrere Prüfschritte.
+
+NARATrace versucht diesen Prozess technisch abzubilden, ohne die quellenkritische Entscheidung zu automatisieren.
+
+```mermaid
+flowchart TD
+    A["Historische Fragestellung<br/>Welche Person wird gesucht?"]
+    B["Suchprofil bilden<br/>Name · Varianten · Daten · Orte · Nummern"]
+    C["Retrieval<br/>A3340-Volltextindex und NARA-Daten"]
+    D["Kandidaten bilden<br/>mögliche Kartenframes"]
+    E["Evidenz vergleichen<br/>Name · Ort · Datum · Mitgliedsnummer"]
+    F["Originalquelle prüfen<br/>Karte · Rolle · Frame · OCR · Provenienz"]
+    G{"Zuordnung ausreichend<br/>belegt?"}
+    H["Rechercheergebnis dokumentieren"]
+    I["Suchprofil erweitern<br/>oder Widersprüche prüfen"]
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    G -- "ja" --> H
+    G -- "nein" --> I
+    I --> B
+```
+
+Der entscheidende Punkt liegt zwischen **Kandidat** und **historischer Aussage**.
+
+NARATrace kann Hinweise gewichten, Namen zusammenführen und Fundstellen sichtbar machen. Die eigentliche quellenkritische Bewertung bleibt jedoch Aufgabe der Forschenden.
+
+Ein hoher Rang bedeutet deshalb lediglich:
+
+> **Dieser Frame enthält im Vergleich zu den anderen Kandidaten besonders viele passende Hinweise und sollte zuerst geprüft werden.**
+
+---
+
+## Was NARATrace derzeit kann
+
+| Bereich                       | Funktion                                                                                                            |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **A3340-Volltextsuche**       | MFKL- und MFOK-Rollen werden aus den öffentlichen NARA-Rollendaten in einen lokalen SQLite-FTS5-Index übernommen.   |
+| **Namenssuche**               | Suche nach Namen und Namensvarianten sowie tolerantere Suche bei OCR- und Schreibvarianten.                         |
+| **Zusätzliche Evidenz**       | Lebensdaten, Orte und Mitgliedsnummern können zur Eingrenzung genutzt werden.                                       |
+| **Nachvollziehbares Ranking** | Treffer werden anhand der verfügbaren Hinweise geordnet, ohne eine automatische Personenidentifizierung vorzugeben. |
+| **Frame-Provenienz**          | Rolle, Frame, NAID, Objektdatei und NARA-Quelle bleiben am Treffer erhalten.                                        |
+| **Originalansicht**           | Treffer führen zum konkreten Kartenframe statt nur zu einem übergeordneten Dokumentcontainer.                       |
+| **Kartenpaar-Ansicht**        | Zusammengehörige Vorder- und Rückseiten können gemeinsam gelesen werden.                                            |
+| **OCR-Prüfung**               | Erkannte Suchbegriffe können unmittelbar im Kartenbild nachvollzogen werden.                                        |
+| **Suchverlauf**               | Abgeschlossene Suchläufe werden lokal gespeichert.                                                                  |
+| **Rechercheexport**           | Ergebnisse können als PDF, HTML oder Markdown dokumentiert werden.                                                  |
+| **Lokale Dokumente**          | Eigene PDF-, Bild- und TIFF-Dateien lassen sich separat untersuchen.                                                |
+
+---
+
+# Die Quellenbasis
+
+NARATrace erzeugt keinen neuen historischen Quellenbestand.
+
+Die Recherche basiert auf der von NARA digital bereitgestellten Mikrofilm-Publikation **A3340 – *Records Relating to Membership in the Nationalsozialistische Deutsche Arbeiterpartei (NSDAP), 1927–1945***.
+
+Sie gehört zur **Record Group 242 – *National Archives Collection of Foreign Records Seized***.
+
+Die zugrunde liegenden deutschen Unterlagen gelangten nach 1945 in alliierte Obhut. Das **Berlin Document Center** wurde eingerichtet, um beschlagnahmte deutsche Unterlagen unter anderem für Kriegsverbrechensverfahren und Entnazifizierungsverfahren zusammenzuführen und auszuwerten.
+
+A3340 umfasst insbesondere zwei für die Personensuche relevante Karteien:
+
+* **MFKL – Zentralkartei**
+* **MFOK – Ortsgruppenkartei**
+
+Die MFKL ist alphabetisch organisiert und bildet den zentralen Einstieg für viele Namensrecherchen. Die MFOK kann zusätzliche lokale beziehungsweise organisatorische Zusammenhänge liefern.
+
+Weiterführende Informationen von NARA:
+
+* [Record Group 242](https://www.archives.gov/research/guide-fed-records/groups/242.html)
+* [Berlin Document Center / Captured German Records](https://www.archives.gov/research/captured-german-records/berlin-document-center.html)
+
+---
+
+# Vom NARA-Datensatz zum Suchergebnis
+
+Für die eigentliche Suche werden nicht bei jeder Anfrage Millionen Bilddateien durchsucht.
+
+Stattdessen erstellt NARATrace aus den öffentlich verfügbaren Rollendaten einen lokalen Suchindex.
+
+```mermaid
+flowchart LR
+    A["NARA<br/>A3340 Open Dataset"]
+    B["MFKL- und<br/>MFOK-Rollen"]
+    C["Roll-JSON<br/>Metadaten + OCR"]
+    D["Kartenframes<br/>mit Provenienz"]
+    E[("Lokaler<br/>SQLite-FTS5-Index")]
+    F["Suchprofil"]
+    G["Retrieval & Ranking"]
+    H["konkreter<br/>Kartenframe"]
+    I["Prüfung am<br/>Original"]
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+
+    F --> G
+    E --> G
+    G --> H
+    H --> I
+```
+
+Die Kartenbilder selbst müssen nicht vollständig lokal gespeichert werden. Für einen konkreten Treffer kann NARATrace die zugehörigen Medien bei NARA abrufen und mit dem lokalen Suchergebnis verbinden.
+
+Dadurch bleibt die Trennung zwischen
+
+**lokalem Suchindex**
+
+und
+
+**archivischem Original**
+
+erhalten.
+
+---
+
+# Arbeiten mit einem Treffer
+
+Nach einem abgeschlossenen Suchlauf führt NARATrace in den lokalen Suchverlauf.
+
+Dort beginnt die eigentliche Prüfung.
+
+### 1. Rangfolge lesen
+
+Die Rangstärke ordnet Kandidaten innerhalb des jeweiligen Suchlaufs.
+
+Sie ist bewusst **keine Identitätswahrscheinlichkeit** und erreicht deshalb auch nicht einfach „100 %“.
+
+### 2. Karte im Zusammenhang betrachten
+
+In der Rohansicht kann ein einzelner Frame mit Zoom und OCR-Markierungen untersucht werden.
+
+Die **Kartenpaar-Ansicht** ordnet zusammengehörige Scans so an, dass Vorderseiten, Rückseiten und mögliche Fortsetzungen gemeinsam gelesen werden können.
+
+### 3. Gefundene Attribute nachvollziehen
+
+Unter **Gesucht und gefunden** lässt sich prüfen, auf welchem Frame ein Name, eine Nummer oder ein anderes Suchmerkmal erkannt wurde.
+
+Die entsprechende OCR-Fundstelle wird in der Kartenansicht hervorgehoben.
+
+### 4. Widersprüche beachten
+
+Ein ähnlicher Name reicht nicht für eine Identifizierung.
+
+Besonders relevant sind deshalb auch Informationen, die **gegen** eine Zuordnung sprechen – beispielsweise abweichende Geburtsdaten, Orte oder Mitgliedsnummern.
+
+---
+
+# Arbeitsansichten
+
+## Neue Suche
+
+Das Suchformular nimmt neben dem Namen zusätzliche Hinweise auf:
+
+* Namensvarianten,
+* Lebensdaten,
+* Orte,
+* Mitgliedsnummern und
+* archivische Eingrenzungen.
+
+Suchjobs laufen im Hintergrund und zeigen ihren aktuellen Fortschritt.
+
+![Suchformular mit ausgefülltem Suchprofil](docs/screenshots/02-search-form.png)
+
+---
+
+## Lokale Dokumente
+
+Neben NARA-Daten können auch eigene PDF-, Bild- und TIFF-Dateien untersucht werden.
+
+NARATrace erstellt dafür eine lokale Vorschau, führt OCR aus und kann relevante Begriffe im Dokument hervorheben.
+
+Diese Dokumente bleiben von den NARA-Treffern getrennt.
+
+![Lokale Dokumentanalyse mit Vorschau und OCR](docs/screenshots/03-local-documents.png)
+
+---
+
+## Methodik
+
+Ein eigener Methodikbereich erläutert den Weg vom Suchprofil über Retrieval und Ranking bis zur Prüfung des Originals.
+
+![Methodik-Reiter mit Workflow-Schema](docs/screenshots/04-methodology.png)
+
+---
+
+# Installation
+
+Dieser Teil richtet sich an Personen, die NARATrace lokal installieren oder weiterentwickeln möchten.
+
+## Voraussetzungen
+
+* Python 3.11 oder neuer
+* Node.js 22 oder neuer
+* Tesseract OCR für lokale OCR-Funktionen
+
+### Backend installieren
 
 ```powershell
 python -m pip install -e .\backend[test]
 ```
 
-Frontend bauen:
+### Frontend installieren und bauen
 
 ```powershell
 cd frontend
@@ -137,187 +292,361 @@ npm run build
 cd ..
 ```
 
-### TypeScript-Frontend und TextMarker-Viewer
+### NARATrace starten
 
-Das Frontend wird strikt mit TypeScript geprüft. Neben Tests und Produktionsbuild steht dafür zur Verfügung:
+```powershell
+python -m naratrace
+```
+
+Standardmäßig läuft die Anwendung ausschließlich lokal unter:
+
+```text
+127.0.0.1:8765
+```
+
+Falls dieser Port bereits verwendet wird:
+
+```powershell
+python -m naratrace --port 8766
+```
+
+Ohne automatischen Browserstart:
+
+```powershell
+python -m naratrace --no-browser
+```
+
+---
+
+# Windows-Schnellstart
+
+Für Windows steht ein Quickstart-Skript bereit:
+
+```powershell
+.\quickstart.bat
+```
+
+Das Skript baut das Frontend und startet anschließend NARATrace.
+
+Ist die vorgesehene lokale Instanz bereits aktiv, wird diese geöffnet. Ist der Port durch einen anderen Dienst belegt, sucht das Skript einen freien lokalen Port.
+
+---
+
+## A3340 erstmals indexieren
+
+Für die vollständige Recherche über A3340 muss der lokale Index einmal aufgebaut werden:
+
+```powershell
+.\quickstart.bat index
+```
+
+Der Vorgang ist fortsetzbar. Bereits vollständig verarbeitete Rollen müssen bei einem späteren Lauf nicht erneut aufgebaut werden.
+
+Indexieren und anschließend starten:
+
+```powershell
+.\quickstart.bat all
+```
+
+Der lokale Index enthält die Texte und Provenienzinformationen der MFKL- und MFOK-Rollen, aber **keine vollständige lokale Kopie aller Kartenbilder**.
+
+---
+
+# Was beim Indexaufbau passiert
+
+Eine **Roll** entspricht einer digitalisierten Mikrofilmrolle.
+
+NARATrace liest die von NARA bereitgestellten Beschreibungen dieser Rollen und übernimmt relevante Texte und Frame-Informationen in einen lokalen SQLite-Index.
+
+Dabei bleibt für jeden Datensatz nachvollziehbar, aus welcher Rolle und welchem Frame er stammt.
+
+Die eigentlichen Kartenbilder werden erst benötigt, wenn ein konkreter Treffer untersucht werden soll.
+
+---
+
+## Indexgeschwindigkeit
+
+Der erste Aufbau des A3340-Indexes benötigt zahlreiche Netzwerkabrufe.
+
+NARATrace verwendet dafür standardmäßig **16 parallele Abrufe** mit wiederverwendeten HTTP-Verbindungen. Die Schreibzugriffe auf SQLite bleiben davon getrennt kontrolliert.
+
+Bei einer stabilen Verbindung kann die Parallelität erhöht werden:
+
+```powershell
+python -m naratrace --index-a3340 --a3340-concurrency 24
+```
+
+Alternativ:
+
+```env
+NARATRACE_A3340_INDEX_CONCURRENCY=24
+```
+
+Der vorgesehene Höchstwert liegt bei 32.
+
+Bei wiederholten Timeouts oder Rate-Limit-Warnungen sollte die Parallelität wieder reduziert werden.
+
+---
+
+# A3340-Index auf einen anderen Rechner übertragen
+
+Der einmal aufgebaute Index lässt sich beispielsweise über einen USB-Stick auf einen anderen Rechner übertragen.
+
+Benötigt wird:
+
+```text
+nsdap-frames.sqlite3
+```
+
+Unter Windows befindet sich die Datei standardmäßig unter:
+
+```text
+%LOCALAPPDATA%\NARATrace\cache\nsdap\nsdap-frames.sqlite3
+```
+
+Da `%LOCALAPPDATA%` benutzerabhängig ist, kann der tatsächliche Pfad auf verschiedenen Rechnern unterschiedlich sein.
+
+Alternativ lässt sich ein eigener Datenpfad konfigurieren:
+
+```env
+NARATRACE_DATA_DIR=D:\NARATrace-Daten
+```
+
+Der Index liegt dann unter:
+
+```text
+D:\NARATrace-Daten\cache\nsdap\nsdap-frames.sqlite3
+```
+
+NARATrace sollte während des Kopierens beendet sein.
+
+Bei Änderungen am Indexformat kann ein erneuter Indexaufbau erforderlich werden.
+
+---
+
+# Offizieller AWS-Bulkzugang
+
+NARA stellt A3340 zusätzlich über einen öffentlichen AWS-Bucket bereit:
+
+```text
+s3://nara-nsdap
+```
+
+Region:
+
+```text
+us-east-2
+```
+
+Für normale NARATrace-Recherchen ist eine vollständige lokale Kopie des Bestands nicht erforderlich.
+
+Wer dennoch einen eigenständigen lokalen Rohdatenbestand aufbauen möchte, kann das dafür vorgesehene PowerShell-Skript verwenden.
+
+Nur Metadaten:
+
+```powershell
+.\scripts\bulk-nsdap.ps1 -Destination D:\NARATrace-NSDAP -Mode Metadata
+```
+
+Für den vollständigen Datenbestand einschließlich großer Mediendateien ist eine zusätzliche explizite Bestätigung notwendig:
+
+```powershell
+.\scripts\bulk-nsdap.ps1 -Destination E:\NARATrace-NSDAP-vollbestand -Mode FullDataset -ConfirmFullDataset
+```
+
+Hierfür wird die AWS CLI v2 benötigt.
+
+---
+
+# NARA API
+
+NARATrace kann zusätzlich die **National Archives Catalog API v2** verwenden.
+
+Dokumentation:
+
+```text
+https://catalog.archives.gov/api/v2/api-docs/
+```
+
+Nach Angaben von NARA kann ein API-Schlüssel über folgende Adresse angefordert werden:
+
+```text
+Catalog_API@nara.gov
+```
+
+Der persönliche API-Schlüssel wird lokal im Betriebssystem-Keyring gespeichert.
+
+```text
+Service: NARATrace
+Account: nara-api-key
+```
+
+Für Entwicklungsumgebungen kann alternativ verwendet werden:
+
+```env
+NARA_API_KEY=...
+```
+
+Der Schlüssel darf nicht in
+
+* SQLite-Datenbanken,
+* Browser Local Storage,
+* Frontend-Code,
+* Logs,
+* Tests,
+* Git-Commits oder
+* Rechercheexporten
+
+gespeichert werden.
+
+---
+
+# Lokale Daten
+
+NARATrace speichert Forschungs- und Anwendungsdaten nicht im Repository.
+
+Unter Windows wird standardmäßig das lokale Anwendungsverzeichnis verwendet:
+
+```text
+%LOCALAPPDATA%\NARATrace\
+```
+
+Dort können unter anderem folgende Verzeichnisse entstehen:
+
+```text
+database/
+cache/
+documents/
+thumbnails/
+ocr/
+exports/
+logs/
+temp/
+```
+
+Für Entwicklung und Tests kann der Datenpfad überschrieben werden:
+
+```env
+NARATRACE_DATA_DIR=D:\mein-pfad
+```
+
+---
+
+# Frontend und TextMarker
+
+Das Frontend wird mit TypeScript entwickelt und entsprechend geprüft.
 
 ```powershell
 cd frontend
 npm run check
 ```
 
-Für die interaktive Transkriptansicht verwendet NARATrace die öffentlichen Web-Component-APIs von `TS_TextMarkerCore` und `TS_TextMarkerViewer`. In diesem Arbeitsbereich sind sie als lokale `file:`-Abhängigkeiten vorgesehen. Vor `npm install` müssen die beiden Schwester-Repositories neben `NARA-Trace` vorhanden sein; der Viewer wird mit seinem eigenen `justfile` gebaut:
+Für die interaktive Text- und Transkriptansicht verwendet NARATrace die Web-Component-APIs von
+
+* `TS_TextMarkerCore`
+* `TS_TextMarkerViewer`
+
+Im aktuellen Entwicklungssetup werden beide als lokale `file:`-Abhängigkeiten eingebunden.
+
+Die Schwester-Repositories sollten deshalb neben `NARA-Trace` liegen.
+
+Der Viewer kann anschließend gebaut werden:
 
 ```powershell
 cd ..\TS_TextMarkerViewer
 just build
+
 cd ..\NARA-Trace\frontend
 npm install
 ```
 
-Die große PDF-Engine des Viewers wird erst geladen, wenn eine Detailansicht geöffnet wird. Sie ergänzt die vorhandene Originalbildansicht; OCR und Originalquelle bleiben unverändert.
+Die größere PDF-Komponente wird erst geladen, wenn sie tatsächlich benötigt wird.
 
-Anwendung starten:
+Die TextMarker-Komponenten ergänzen die Originalansicht. Sie verändern weder den archivischen Ursprung eines Treffers noch dessen OCR- oder Provenienzinformationen.
 
-```powershell
-python -m naratrace
-```
+---
 
-Der Server bindet standardmäßig nur an `127.0.0.1` und verwendet Port `8765`.
+# Dokumentation
 
-Falls der Port belegt ist:
+Je nach Interesse sind unterschiedliche Dokumente sinnvoll:
 
-```powershell
-python -m naratrace --port 8766
-```
+### Nutzung
 
-Ohne Browserstart:
+[Nutzeranleitung](docs/USER-GUIDE.md)
 
-```powershell
-python -m naratrace --no-browser
-```
+### Suchverfahren und Bewertung
 
-Windows-Schnellstart:
+[Suchmethodik](docs/SEARCH-METHODOLOGY.md)
 
-```powershell
-.\quickstart.bat
-```
+### Archivbestand und Datenstruktur
 
-Das Batch-Skript baut das Frontend und startet NARATrace auf Port `8766`. Läuft dort bereits NARATrace, öffnet es diese Instanz statt mit einem Portfehler abzubrechen. Ist der Port durch einen anderen Dienst belegt, wählt es den nächsten freien lokalen Port bis `8776`. Für die vollständige A3340-Suche zuerst einmalig beziehungsweise nach einem Abbruch fortsetzbar ausführen:
+[NARA- und A3340-Datenarchitektur](docs/NARA_Architekture.md)
 
-```powershell
-.\quickstart.bat index
-```
+### Softwarearchitektur
 
-Mit einem Befehl indizieren und starten:
+[TRAXER-Programmarchitektur](docs/TRAXER_Architekture.md)
 
-```powershell
-.\quickstart.bat all
-```
+### Attribution und NARA-Bezug
 
-Der Index enthält die Roll-JSON-Texte aller MFKL-/MFOK-Rollen, aber keine Massenkopie der Kartenbilder.
+[NARA-Attribution](docs/NARA-ATTRIBUTION.md)
 
-### Was beim ersten A3340-Durchlauf passiert
+---
 
-Eine *Roll* ist eine digitalisierte Mikrofilmrolle und damit ein archivischer Container. NARATrace liest zu jeder Rolle die von NARA veröffentlichte JSON-Beschreibung, übernimmt den OCR-Text und die Fundstellen der einzelnen Kartenframes in einen lokalen Volltextindex und behält die Herkunft jedes Treffers bei. Die Kartenbilder selbst bleiben bei NARA und werden nur für konkrete Treffer abgerufen.
+# Tests
 
-```mermaid
-flowchart LR
-    A[NARA: A3340 Open Dataset] --> B[Manifest mit MFKL- und MFOK-Rollen]
-    B --> C[Roll-JSON je Mikrofilmrolle]
-    C --> D[Einzelne Kartenframes mit OCR und Provenienz]
-    D --> E[Lokaler SQLite-Volltextindex]
-    E --> F[Suche über den Gesamtbestand]
-    F --> G[Konkreten Frame im Original prüfen]
-```
-
-MFKL ist die alphabetisch geführte Zentralkartei und der zentrale Einstieg für Namensrecherchen. MFOK ist die Ortsgruppenkartei und kann einen unabhängigen lokalen bzw. geografischen Bezug liefern. Ein Suchtreffer ist stets ein Hinweis: Name, Frame, Rolle und Originalquelle müssen quellenkritisch geprüft werden. Die ausführliche historische und technische Einordnung steht in [docs/NARA_Architekture.md](docs/NARA_Architekture.md).
-
-### Indexgeschwindigkeit und kontrollierte Parallelität
-
-Der erste Indexaufbau lädt die Roll-JSONs eines großen Bestands aus dem Netz und kann deshalb je nach Verbindung dauern. NARATrace verwendet dafür standardmäßig **16 parallele Abrufe** mit wiederverwendeten HTTP-Verbindungen; Schreibzugriffe auf den lokalen SQLite-Index bleiben kontrolliert. Das beschleunigt den Netzabruf, ohne ungebremst Threads oder Anfragen zu erzeugen.
-
-Bei einer stabilen Verbindung kann die Parallelität bewusst bis höchstens 32 erhöht werden:
-
-```powershell
-python -m naratrace --index-a3340 --a3340-concurrency 24
-```
-
-Alternativ setzt `NARATRACE_A3340_INDEX_CONCURRENCY=24` den lokalen Standard. Bei wiederholten Timeout- oder Rate-Limit-Warnungen sollte der Wert wieder reduziert werden. Bereits indexierte Rollen werden beim nächsten Lauf übersprungen.
-
-### A3340-Index per USB-Stick übertragen
-
-Der einmal aufgebaute A3340-Index kann auf einen anderen PC kopiert werden. Dafür genügt die Datei `nsdap-frames.sqlite3`; die zwischengespeicherten Roll-JSON-Dateien müssen nicht übertragen werden.
-
-Der Standardpfad ist **benutzerabhängig** und daher auf einem anderen PC nicht derselbe:
-
-```text
-%LOCALAPPDATA%\NARATrace\cache\nsdap\nsdap-frames.sqlite3
-```
-
-Auf dem Ziel-PC kopiere die Datei vom USB-Stick genau in den dortigen Standardpfad. Alternativ kann auf beiden PCs in der `.env` ein gemeinsamer Datenpfad festgelegt werden:
-
-```env
-NARATRACE_DATA_DIR=D:\NARATrace-Daten
-```
-
-Dann erwartet NARATrace den Index hier:
-
-```text
-D:\NARATrace-Daten\cache\nsdap\nsdap-frames.sqlite3
-```
-
-Die Anwendung vor dem Kopieren beenden. Der Index muss zur verwendeten NARATrace-Version passen; bei einem späteren Indexformat-Update baut NARATrace fehlende oder veraltete Daten erneut auf.
-
-## API-Schlüssel
-
-Der NARA-API-Schlüssel wird lokal im Betriebssystem-Keyring gespeichert:
-
-- Service: `NARATrace`
-- Account: `nara-api-key`
-
-Für Entwicklung ist alternativ die Umgebungsvariable `NARA_API_KEY` vorgesehen. Der Schlüssel darf nicht in SQLite, Browser Local Storage, Frontend-Code, Logs, Tests, Git-Commits oder Exporte geschrieben werden.
-
-In der Oberfläche unter `Einstellungen` kann der Schlüssel lokal gespeichert, getestet und gelöscht werden. Ohne gültigen persönlichen NARA API-Schlüssel kann NARATrace keine echten Treffer aus dem National Archives Catalog abrufen.
-
-Siehe `.env.example` für lokale Entwicklungsvariablen ohne echte Geheimnisse.
-
-Eine kompakte Anleitung für neue Nutzer liegt unter [docs/USER-GUIDE.md](docs/USER-GUIDE.md).
-
-## Lokale Daten
-
-Benutzerdaten werden nicht im Repository gespeichert. NARATrace verwendet das lokale Betriebssystem-Datenverzeichnis. Unter Windows ist das standardmäßig:
-
-```text
-%LOCALAPPDATA%\NARATrace\
-```
-
-Darin werden angelegt:
-
-- `database/`
-- `cache/`
-- `documents/`
-- `thumbnails/`
-- `ocr/`
-- `exports/`
-- `logs/`
-- `temp/`
-
-Für Entwicklung und Tests kann das Datenverzeichnis mit `NARATRACE_DATA_DIR` überschrieben werden.
-
-## Methodik und Quellenkritik
-
-NARATrace darf keine Person allein aufgrund eines ähnlichen Namens sicher identifizieren. Das Ranking kombiniert Namen, Varianten, Orte, Lebensdaten, Mitgliedsnummern, Metadaten, NARA Extracted Text und lokale OCR. Je mehr unabhängige Merkmale konsistent zusammenpassen, desto plausibler wird ein Treffer.
-
-Weitere Notizen:
-
-- [Nutzeranleitung](docs/USER-GUIDE.md)
-- [Suchmethodik](docs/SEARCH-METHODOLOGY.md)
-- [NARA- und A3340-Datenarchitektur](docs/NARA_Architekture.md)
-- [TRAXER-Programmarchitektur](docs/TRAXER_Architekture.md)
-- [NARA-Attribution](docs/NARA-ATTRIBUTION.md)
-
-## Tests
-
-Kompletter Projekttest:
+Gesamtes Projekt:
 
 ```powershell
 .\scripts\test.ps1
 ```
 
-Backend direkt:
+Backend:
 
 ```powershell
 python -m pytest .\backend\tests
 ```
 
-Frontend direkt:
+Frontend:
 
 ```powershell
 cd frontend
 npm run test -- --run
 ```
 
-## Grenzen
+---
 
-OCR-Text kann fehlerhaft sein. Archivische Metadaten, Rechtehinweise und Zitierweisen müssen für wissenschaftliche Nutzung am Originaldatensatz geprüft werden. NARATrace ist ein unabhängiges, inoffizielles Forschungswerkzeug. Es steht nicht in Verbindung mit NARA und wird nicht von NARA betrieben oder unterstützt.
+# Methodische Grenzen
+
+NARATrace soll historische Recherche **unterstützen**, nicht historische Identitäten automatisch feststellen.
+
+OCR kann fehlerhaft sein. Namen können mehrfach vorkommen. Schreibweisen verändern sich. Scans können schwer lesbar sein und Metadaten können unvollständig sein.
+
+Deshalb kombiniert die Suche unterschiedliche Hinweise wie:
+
+* Namen und Namensvarianten,
+* Orte,
+* Lebensdaten,
+* Mitgliedsnummern,
+* archivische Metadaten,
+* NARA Extracted Text und
+* lokale OCR.
+
+Mehrere übereinstimmende und voneinander unabhängige Merkmale können einen Treffer stärker machen. Sie ersetzen jedoch nicht die Prüfung des Originals.
+
+Für wissenschaftliche Arbeiten sollten daher mindestens
+
+**Karte → Frame → Rolle → archivischer Kontext → NARA-Nachweis**
+
+nachvollzogen werden.
+
+Die Originalquelle bleibt die Grundlage der historischen Aussage.
+
+---
+
+## Projektstatus
+
+NARATrace ist ein **unabhängiges und inoffizielles Forschungswerkzeug**.
+
+Das Projekt steht nicht in Verbindung mit der U.S. National Archives and Records Administration und wird von NARA weder betrieben noch unterstützt.
+
+Archivische Metadaten, Rechteinformationen und Zitierweisen sollten für eine wissenschaftliche Verwendung immer am jeweiligen Originaldatensatz überprüft werden.

@@ -25,13 +25,18 @@
     type PageHitRegionResponse,
     type ResultMediaPageResponse,
     type SearchJobResponse,
+    type SearchReportFormat,
     type SearchResultResponse,
     type SettingsResponse
   } from './lib/api';
-  import TranscriptAnnotationViewer from './lib/TranscriptAnnotationViewer.svelte';
+  import { marked } from 'marked';
   import schultzePage2Url from './assets/demo/schultze-page-2.png';
+  import projectMarkdown from '../../README.md?raw';
+  import architectureMarkdown from '../../docs/TRAXER_Architekture.md?raw';
+  import landingToCardGifUrl from '../../docs/screenshots/landing-to-card.gif';
+  import searchToHistoryGifUrl from '../../docs/screenshots/search-to-history.gif';
 
-  type RouteId = 'start' | 'search' | 'history' | 'local-documents' | 'settings' | 'methodology' | 'about' | 'result-detail';
+  type RouteId = 'start' | 'search' | 'history' | 'local-documents' | 'settings' | 'methodology' | 'architecture' | 'about' | 'result-detail';
   type DetailOrigin = 'start' | 'history' | 'search';
 
   type TranscriptLine = {
@@ -91,6 +96,14 @@
     transcriptEdited: boolean;
   };
 
+  type CardDisplayMode = 'single' | 'spread';
+
+  type CardPageGroups = {
+    front: DisplayMediaPage[];
+    back: DisplayMediaPage[];
+    other: DisplayMediaPage[];
+  };
+
   type ImageHitRegion = PageHitRegionResponse;
 
   type DecadeBucket = {
@@ -110,13 +123,26 @@
     { id: 'start', label: 'Start' },
     { id: 'search', label: 'Neue Suche' },
     { id: 'history', label: 'Suchverläufe' },
-    { id: 'local-documents', label: 'Lokale Dokumente' },
     { id: 'settings', label: 'Einstellungen' },
-    { id: 'methodology', label: 'Methodik' },
-    { id: 'about', label: 'Über NARATrace' }
+    { id: 'methodology', label: 'Methodik' }
   ];
 
-  const routeIds: RouteId[] = [...navItems.map((item) => item.id), 'result-detail'];
+  const routeIds: RouteId[] = [...navItems.map((item) => item.id), 'local-documents', 'about', 'architecture', 'result-detail'];
+  function renderProjectMarkdown(markdown: string): string {
+    const preparedMarkdown = markdown
+      .replaceAll('docs/screenshots/landing-to-card.gif', landingToCardGifUrl)
+      .replaceAll('docs/screenshots/search-to-history.gif', searchToHistoryGifUrl)
+      .replace(
+        /> \[!IMPORTANT\]\r?\n> ([\s\S]*?)(?=\r?\n\r?\n|$)/,
+        (_match, content: string) =>
+          `<aside class="markdown-callout markdown-callout-important"><strong>Wichtiger Hinweis</strong><p>${marked.parseInline(content.trim())}</p></aside>`
+      );
+
+    return marked.parse(preparedMarkdown, { async: false }) as string;
+  }
+
+  const projectDocumentHtml = renderProjectMarkdown(projectMarkdown);
+  const architectureDocumentHtml = marked.parse(architectureMarkdown, { async: false }) as string;
   const schultzeNaumburgPhotoUrl = '/demo/schultze-naumburg.png';
   const SEARCH_STATUS_POLL_MS = 1000;
   const SEARCH_STATUS_MAX_POLL_FAILURES = 5;
@@ -238,6 +264,60 @@
       ],
       recordYears: [1931],
       evidence: ['Name und Mitgliedsnummer passen.', 'Geburtsort Almrich sowie Wohnorte Naumburg und später Weimar stützen den Treffer.', 'Aktenfoto ist in Seite 4 der lokalen PDF enthalten.']
+    },
+    {
+      resultId: null,
+      jobId: null,
+      key: 'demo-mock-schultze-naumburg',
+      title: 'Mock-Datensatz: Namensähnlicher Kandidat',
+      series: 'Demo · keine Archivquelle',
+      matchScore: 58,
+      category: 'Namenshinweis mit Abweichungen',
+      dataSource: 'MOCK',
+      naid: 'MOCK-NAID-0002',
+      textOrigin: 'synthetische Demo-Daten',
+      name: 'Paul Schultze Naumburg',
+      birthDate: 'nicht belegt',
+      birthPlace: 'nicht belegt',
+      residencePlace: 'Naumburg ähnlich',
+      portraitUrl: null,
+      sourcePageUrl: null,
+      sourceCatalogUrl: null,
+      sourcePageLabel: 'Mock-Datensatz – keine NARA-Quelle',
+      lines: [],
+      transcriptText: 'Paul Schultze Naumburg\nOrt: Naumburg ähnlich',
+      transcriptSource: 'synthetische Demo-Daten',
+      transcriptEdited: false,
+      mediaPages: [],
+      recordYears: [],
+      evidence: ['Der Name ist ähnlich.', 'Geburtsdatum und Mitgliedsnummer fehlen.', 'Nur ein Demonstrationshinweis – keine Archivquelle.']
+    },
+    {
+      resultId: null,
+      jobId: null,
+      key: 'demo-mock-schulze',
+      title: 'Mock-Datensatz: abweichende Schreibweise',
+      series: 'Demo · keine Archivquelle',
+      matchScore: 34,
+      category: 'schwacher Namenshinweis',
+      dataSource: 'MOCK',
+      naid: 'MOCK-NAID-0003',
+      textOrigin: 'synthetische Demo-Daten',
+      name: 'Paul Schulze',
+      birthDate: 'abweichend',
+      birthPlace: 'abweichend',
+      residencePlace: 'abweichender Ort',
+      portraitUrl: null,
+      sourcePageUrl: null,
+      sourceCatalogUrl: null,
+      sourcePageLabel: 'Mock-Datensatz – keine NARA-Quelle',
+      lines: [],
+      transcriptText: 'Paul Schulze\nAbweichende Orts- und Datumsangaben',
+      transcriptSource: 'synthetische Demo-Daten',
+      transcriptEdited: false,
+      mediaPages: [],
+      recordYears: [],
+      evidence: ['Nur eine verkürzte Namensvariante passt.', 'Lebensdaten und Ort widersprechen dem Suchprofil.', 'Nur ein Demonstrationshinweis – keine Archivquelle.']
     }
   ]);
 
@@ -278,6 +358,7 @@
   let exportingJobId = '';
   let exportNotice = '';
   let exportError = '';
+  let reportFormat: SearchReportFormat = 'pdf';
   let localDocumentFile: File | null = null;
   let localDocumentTerms = '';
   let localDocumentResult: LocalDocumentResponse | null = null;
@@ -291,6 +372,7 @@
   let settingsNotice = '';
   let settingsStatusUpdatedAt: number | null = null;
   let settingsStatusRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  let settingsRequestInFlight: Promise<void> | null = null;
   let naraApiKeyInput = '';
   let keyTest: ApiKeyTestResponse | null = null;
   let detailResult: DisplayResult | null = null;
@@ -308,6 +390,7 @@
   let transcriptNotices: Record<string, string> = {};
   let transcriptErrors: Record<string, string> = {};
   let selectedMediaIndexes: Record<string, number> = {};
+  let cardDisplayModes: Record<string, CardDisplayMode> = {};
   let mediaZoomLevels: Record<string, number> = {};
   let mediaPanOffsets: Record<string, { x: number; y: number }> = {};
   let draggingMedia:
@@ -320,6 +403,7 @@
         originY: number;
       }
     | null = null;
+  let hoverRequest = 0;
 
   $: focusedLineId = hoveredLineId || pinnedLineId;
   $: currentSearchProgressPercent = searchProgressPercent(currentJob);
@@ -394,7 +478,7 @@
   }
 
   function scoreLabel(score: number) {
-    return `${Math.round(score)} %`;
+    return `${Math.round(score)} / 100`;
   }
 
   function clampSearchCandidates(value: number) {
@@ -653,7 +737,7 @@
     exportNotice = '';
     exportError = '';
     try {
-      const report = await downloadSearchReport(job.id);
+      const report = await downloadSearchReport(job.id, reportFormat);
       const url = URL.createObjectURL(report.blob);
       const link = document.createElement('a');
       link.href = url;
@@ -662,7 +746,7 @@
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      exportNotice = 'Recherchebericht wurde erzeugt.';
+      exportNotice = `Recherchebericht als ${reportFormat === 'markdown' ? 'Markdown' : reportFormat.toUpperCase()} wurde erzeugt.`;
     } catch (error) {
       exportError = error instanceof Error ? error.message : 'Der Recherchebericht konnte nicht erstellt werden.';
     } finally {
@@ -936,15 +1020,64 @@
     return currentMediaPage(result)?.label ?? result.sourcePageLabel;
   }
 
+  function cardDisplayMode(result: DisplayResult): CardDisplayMode {
+    return cardDisplayModes[result.key] ?? 'single';
+  }
+
+  function setCardDisplayMode(result: DisplayResult, mode: CardDisplayMode) {
+    cardDisplayModes = { ...cardDisplayModes, [result.key]: mode };
+    refreshMediaViewer(result);
+  }
+
+  function cardPageGroups(result: DisplayResult): CardPageGroups {
+    const pages = result.mediaPages.filter((page) => page.mediaType === 'image' && page.mediaUrl);
+    if (pages.length === 0) return { front: [], back: [], other: [] };
+    if (pages.length === 1) return { front: pages, back: [], other: [] };
+    const signals = pages.map(cardSideSignals);
+    const secondPageIsClearlyBack = signals[1].back >= signals[1].front + 3;
+    // A3340 roll JSON has no explicit card-side metadata. Fold-out cards
+    // normally use two scans per side: front 1/2, reverse 1/2. In short
+    // sequences only, a strongly back-specific OCR signal may make page 2
+    // the reverse already. Further frames are intentionally not mislabelled
+    // as reverse pages and remain available as "Sonstige".
+    const frontCount = pages.length >= 4 || !secondPageIsClearlyBack ? 2 : 1;
+    const backCount = pages.length === 3 && frontCount === 1 ? 1 : Math.min(2, pages.length - frontCount);
+    return {
+      front: pages.slice(0, frontCount),
+      back: pages.slice(frontCount, frontCount + backCount),
+      other: pages.slice(frontCount + backCount)
+    };
+  }
+
+  function cardSideSignals(page: DisplayMediaPage) {
+    const text = page.transcriptText?.toLocaleLowerCase('de-DE') ?? '';
+    const front =
+      (/(?:mitgl\.?|mitglieds?\s*-?)\s*(?:nr|no)/.test(text) ? 3 : 0) +
+      (/aufnahme(?:\s+beantragt)?/.test(text) ? 2 : 0) +
+      (/austritt|wiedereintritt|ausschluss|gelöscht|gestorben/.test(text) ? 2 : 0);
+    const back =
+      (/monatsmeld(?:g|ung)/.test(text) ? 3 : 0) +
+      (/registratur[ -]?vorgang/.test(text) ? 3 : 0) +
+      (/verwarnung|mitgliedskarte\s+ausgestellt/.test(text) ? 2 : 0) +
+      (/ortsgr\.?|lt\.?\s*rl\.?/.test(text) ? 1 : 0);
+    return { front, back };
+  }
+
   function isA3340CardSequence(result: DisplayResult) {
     return /a3340|mitgliedskartei|membership/i.test(`${result.title} ${result.series}`) && result.mediaPages.length > 1;
   }
 
   function cardViewLabel(result: DisplayResult, index: number) {
     if (!isA3340CardSequence(result)) return `Ansicht ${index + 1}`;
-    if (index === 0) return 'Vorderseite';
-    if (index === 1) return 'Rückseite';
-    return `Fortsetzung ${index - 1}`;
+    const page = result.mediaPages[index];
+    const groups = cardPageGroups(result);
+    const frontIndex = groups.front.indexOf(page);
+    if (frontIndex >= 0) return `Vorderseite ${frontIndex + 1}`;
+    const backIndex = groups.back.indexOf(page);
+    if (backIndex >= 0) return `Rückseite ${backIndex + 1}`;
+    const otherIndex = groups.other.indexOf(page);
+    if (otherIndex >= 0) return `Sonstige ${otherIndex + 1}`;
+    return `Ansicht ${index + 1}`;
   }
 
   function mediaViewAccessibleLabel(result: DisplayResult, page: DisplayMediaPage, index: number) {
@@ -1129,12 +1262,23 @@
     return page ? Boolean(requests[imageHitKey(result, page)]) : false;
   }
 
-  async function loadCurrentImageHitRegions(result: DisplayResult) {
-    const page = currentMediaPage(result);
-    if (!page || page.mediaType !== 'image' || page.pageId === null || result.lines.length > 0) {
+  function imageHitSearchTerms(result: DisplayResult) {
+    const seen = new Set<string>();
+    return [...(result.highlightTerms ?? []), ...(result.matchedFields ?? []).map((field) => field.term)]
+      .map((term) => term.trim())
+      .filter((term) => {
+        const key = term.toLocaleLowerCase('de-DE');
+        if (term.length < 2 || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
+
+  async function loadImageHitRegionsForPage(result: DisplayResult, page: DisplayMediaPage) {
+    if (page.mediaType !== 'image' || page.pageId === null || result.lines.length > 0) {
       return;
     }
-    const terms = (result.highlightTerms ?? []).map((term) => term.trim()).filter((term) => term.length >= 2);
+    const terms = imageHitSearchTerms(result);
     if (terms.length === 0) return;
 
     const key = imageHitKey(result, page);
@@ -1148,6 +1292,13 @@
       imageHitRegions = { ...imageHitRegions, [key]: [] };
     } finally {
       imageHitRequests = { ...imageHitRequests, [key]: false };
+    }
+  }
+
+  async function loadCurrentImageHitRegions(result: DisplayResult) {
+    const page = currentMediaPage(result);
+    if (page) {
+      await loadImageHitRegionsForPage(result, page);
     }
   }
 
@@ -1291,11 +1442,40 @@
   }
 
   function clearHoveredLine() {
+    hoverRequest += 1;
     hoveredLineId = '';
   }
 
   function togglePinnedLine(lineId: string) {
     pinnedLineId = pinnedLineId === lineId ? '' : lineId;
+  }
+
+  async function activateMatchedField(result: DisplayResult, field: MatchedFieldResponse, mode: 'hover' | 'pin') {
+    const fallbackLineId = `matched-field:${result.key}:${field.term}`;
+    const requestId = mode === 'hover' ? ++hoverRequest : hoverRequest;
+    if (mode === 'hover') {
+      hoveredLineId = fallbackLineId;
+    } else {
+      pinnedLineId = fallbackLineId;
+    }
+
+    for (let index = 0; index < result.mediaPages.length; index += 1) {
+      const page = result.mediaPages[index];
+      await loadImageHitRegionsForPage(result, page);
+      if (mode === 'hover' && requestId !== hoverRequest) return;
+      const hasFieldHit = imageHitRegionsFor(result, page).some(
+        (region) => region.term.toLocaleLowerCase('de-DE') === field.term.toLocaleLowerCase('de-DE')
+      );
+      if (!hasFieldHit) continue;
+      setMediaPage(result, index);
+      const lineId = imageHitLineId(page, field.term);
+      if (mode === 'hover') {
+        hoveredLineId = lineId;
+      } else {
+        pinnedLineId = lineId;
+      }
+      return;
+    }
   }
 
   async function checkBackend() {
@@ -1351,7 +1531,7 @@
       if (currentJob && terminalJobStatus(currentJob.status)) {
         searchProgressHint = '';
       }
-      await loadSettings();
+      await loadSettings({ refreshAfterCurrent: true });
       if (currentJob?.status === 'complete') {
         const results = await fetchSearchResults(startedJob.id);
         currentResults = sortDisplayResults(results.map(displayResultFromResponse));
@@ -1364,6 +1544,21 @@
         searchNotice = `Suchjob für "${name}" wurde lokal gespeichert. Status: ${currentJob?.status ?? startedJob.status}.`;
       }
       await loadHistory();
+      if (currentJob?.status === 'complete') {
+        const storedJob = historyJobs.find((job) => job.id === currentJob?.id);
+        historyHint = `Suchlauf für "${name}" ist abgeschlossen. Prüfe die Rangfolge und die Originalkarten.`;
+        activeRoute = 'history';
+        window.location.hash = 'history';
+        if (storedJob) {
+          await openHistoryJob(storedJob);
+          historyHint = `Suchlauf für "${name}" ist abgeschlossen. Prüfe die Rangfolge und die Originalkarten.`;
+        } else {
+          // The result page remains usable even when a short history refresh
+          // failed after the completed job was saved.
+          selectedHistoryJob = currentJob;
+          selectedHistoryResults = currentResults;
+        }
+      }
     } catch (error) {
       searchError = error instanceof Error ? error.message : 'Der Suchjob konnte nicht angelegt werden.';
     } finally {
@@ -1520,27 +1715,41 @@
     }
   }
 
-  async function loadSettings({ background = false }: { background?: boolean } = {}) {
-    if (settingsLoading || settingsRefreshing) return;
+  async function loadSettings({ background = false, refreshAfterCurrent = false }: { background?: boolean; refreshAfterCurrent?: boolean } = {}) {
+    if (settingsRequestInFlight) {
+      await settingsRequestInFlight;
+      if (!background && refreshAfterCurrent) {
+        await loadSettings({ refreshAfterCurrent: false });
+      }
+      return;
+    }
     if (background) {
       settingsRefreshing = true;
     } else {
       settingsLoading = true;
       settingsError = '';
     }
+    const request = (async () => {
+      try {
+        settings = await fetchSettings();
+        settingsStatusUpdatedAt = Date.now();
+      } catch (error) {
+        if (!background) {
+          settingsError = error instanceof Error ? error.message : 'Die Einstellungen konnten nicht geladen werden.';
+        }
+      } finally {
+        if (background) {
+          settingsRefreshing = false;
+        } else {
+          settingsLoading = false;
+        }
+      }
+    })();
+    settingsRequestInFlight = request;
     try {
-      settings = await fetchSettings();
-      settingsStatusUpdatedAt = Date.now();
-    } catch (error) {
-      if (!background) {
-        settingsError = error instanceof Error ? error.message : 'Die Einstellungen konnten nicht geladen werden.';
-      }
+      await request;
     } finally {
-      if (background) {
-        settingsRefreshing = false;
-      } else {
-        settingsLoading = false;
-      }
+      if (settingsRequestInFlight === request) settingsRequestInFlight = null;
     }
   }
 
@@ -1601,8 +1810,8 @@
       {apiKeyStatusLabel(settings)}
     </span>
     {#if settings?.nara_api_key_configured}
-      <span class={`quota-badge ${apiUsageTone(settings.nara_api_usage)}`}>
-        NARA API: {apiUsageLabel(settings.nara_api_usage)}
+      <span class={`quota-badge ${apiUsageTone(settings.nara_api_usage)}`} title="Lokaler Zähler der tatsächlich ausgeführten NARA-Catalog-API-Anfragen. Der öffentliche A3340-Dataset-Zugriff benötigt keinen API-Schlüssel.">
+        Catalog API (lokal): {apiUsageLabel(settings.nara_api_usage)}
       </span>
     {/if}
   </div>
@@ -1625,89 +1834,160 @@
   {#if activeRoute === 'start'}
     <section class="intro">
       <div class="intro-copy">
+        <span class="eyebrow">Überlieferung · NARA Record Group 242</span>
         <h1>NARATrace</h1>
         <p>
-          NARATrace unterstützt historische Archivforschung. Ergebnisse aus OCR und automatischem Matching
-          sind Forschungshinweise und keine gesicherten Identifizierungen.
+          Die Recherche beginnt nicht bei einem Algorithmus, sondern bei einer überlieferten Karteikarte. NARATrace
+          macht die digitalisierten A3340-Bestände von NARA lokal durchsuchbar und bewahrt dabei ihre Herkunft:
+          Rolle, Frame, NAID, Objektdatei und Original-URL bleiben am Treffer sichtbar.
+        </p>
+        <p>
+          Die Unterlagen gehören zu Record Group 242, den nach 1945 in alliierte Obhut gelangten deutschen Akten.
+          Das Berlin Document Center erschloss sie unter anderem für Kriegsverbrechens- und Entnazifizierungsverfahren.
         </p>
         <div class="actions">
           <a class="button" href="#search" onclick={(event) => navigate(event, 'search')}>Personensuche starten</a>
-          <button class="button secondary" type="button" onclick={checkBackend} disabled={healthLoading}>
-            {healthLoading ? 'Prüfe Backend...' : 'Backend-Status prüfen'}
-          </button>
         </div>
       </div>
 
-      <section class="example-panel" aria-label="Anzeige-Beispiel">
-        <div class="section-heading">
-          <span class="eyebrow">Anzeige-Beispiel</span>
-          <h2>Paul Schultze-Naumburg</h2>
-        </div>
-        <div class="ranked-list compact">
-          {#each demoDisplayResults as result}
-            <button class="match-row" type="button" onclick={() => openResultDetail(result, 'start')}>
-              <span class="portrait-frame">
-                {#if result.portraitUrl}
-                  <img src={result.portraitUrl} alt={`Aktenfoto ${result.name}`} />
-                {:else}
-                  <span class="portrait-placeholder">{initials(result.name)}</span>
-                {/if}
-              </span>
-              <span class="match-summary">
-                <span class="match-topline">
-                  <span class={`source-badge ${sourceBadgeClass(result.dataSource)}`}>{result.dataSource}</span>
-                  <span class="score-pill">{scoreLabel(result.matchScore)}</span>
-                </span>
-                <span class="match-name">{result.name}</span>
-                <span class="match-record">{result.naid}</span>
-                <span class="match-facts">
-                  <span>Geburtsdatum: {result.birthDate}</span>
-                  <span>Wohnort: {result.residencePlace}</span>
-                </span>
-              </span>
-            </button>
-          {/each}
+      <section class="heritage-image" aria-label="Digitalisierter A3340-Kartenframe">
+        <img src={schultzePage2Url} alt="Digitalisierter A3340-Kartenframe von Paul Schultze-Naumburg" />
+        <div>
+          <span>NARA A3340 · Kartenframe</span>
+          <strong>Quelle vor Score.</strong>
         </div>
       </section>
 
-      <section class="research-workflow" aria-label="Recherche-Workflow">
+      <section class="landing-history" aria-label="Überlieferungsgeschichte">
+        <div class="landing-history-copy">
+          <span class="eyebrow">1945 → Berlin Document Center → NARA</span>
+          <h2>Der Weg der Unterlagen ist Teil ihrer Aussage.</h2>
+          <p>
+            Nach dem Ende des Zweiten Weltkriegs übernahmen die Alliierten umfangreiche deutsche Verwaltungs- und
+            Parteiunterlagen. Das 1945 gegründete Berlin Document Center führte darunter Mitgliedschafts-, Personal-
+            und Organisationsunterlagen zusammen. Sie dienten zunächst der Aufklärung von NS-Verbrechen und den
+            Entnazifizierungsverfahren; später wurden sie zu einer zentralen Überlieferung für historische Forschung.
+          </p>
+          <p>
+            NARA bewahrt diese Überlieferung in der <em>National Archives Collection of Foreign Records Seized</em>
+            (Record Group 242). Die Mikrofilm-Publikation A3340 umfasst die NSDAP-Mitgliedskartei von 1927 bis 1945:
+            die alphabetische MFKL-Zentralkartei und die MFOK-Ortsgruppenkartei. Eine Rolle ist dabei kein abstrakter
+            Datenbankordner, sondern ein archivischer Container; ein Frame ein konkreter digitalisierter Scan.
+          </p>
+          <p>
+            Genau deshalb bleibt NARATrace an der Provenienz orientiert. Der lokale Index beschleunigt den Zugang,
+            aber jede technische Zuordnung führt zurück zu Rolle, Frame und NARAs Originalobjekt.
+          </p>
+          <a href="https://www.archives.gov/research/captured-german-records/berlin-document-center.html" target="_blank" rel="noreferrer">
+            NARAs Hintergrund zur Überlieferung des Berlin Document Center ↗
+          </a>
+        </div>
+        <figure class="bdc-photo">
+          <a href="https://www.bundesarchiv.de/assets/bundesarchiv/de/_processed_/6/b/csm_BArch-Bild-183-M1129-300-Donath-Otto-berlin-document-center-1947_46c654b25f.jpg" target="_blank" rel="noreferrer">
+            <img src="https://www.bundesarchiv.de/assets/bundesarchiv/de/_processed_/6/b/csm_BArch-Bild-183-M1129-300-Donath-Otto-berlin-document-center-1947_46c654b25f.jpg" alt="Berlin Document Center, 1947" />
+          </a>
+          <figcaption>
+            Berlin Document Center, 1947 · Foto: Otto Donath ·
+            <a href="https://www.bundesarchiv.de/assets/bundesarchiv/de/_processed_/6/b/csm_BArch-Bild-183-M1129-300-Donath-Otto-berlin-document-center-1947_46c654b25f.jpg" target="_blank" rel="noreferrer">Bundesarchiv, Bild 183-M1129-300</a>
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="landing-example" aria-label="Anzeige-Beispiel Suchverlauf">
+        <div class="section-heading landing-section-heading">
+          <span class="eyebrow">Anzeige-Beispiel · lokaler Suchverlauf</span>
+          <h2>Das Ergebnis in Ihrem Suchverlauf könnte so aussehen.</h2>
+          <p>Ein Suchlauf bleibt als Arbeitsstand erhalten: mit Status, Treffern und einem direkten Weg zum konkreten Kartenframe.</p>
+        </div>
+        <div class="history-workspace landing-history-workspace">
+          <section class="history-sidebar" aria-label="Beispiel eines gespeicherten Suchlaufs">
+            <div class="history-sidebar-header">
+              <span class="eyebrow">Archiv</span>
+              <h2>Gespeicherte Suchläufe</h2>
+              <p>1 lokaler Suchlauf</p>
+            </div>
+            <article class="history-entry">
+              <button class="history-row selected" type="button" onclick={() => openResultDetail(demoDisplayResults[0], 'start')}>
+                <span class="history-preview-frame">
+                  <img src={demoDisplayResults[0].portraitUrl} alt="Vorschau Paul Schultze-Naumburg" />
+                </span>
+                <span class="history-row-copy">
+                  <span class="history-title">Paul Schultze-Naumburg</span>
+                  <span class="history-preview-title">A3340 MFKL</span>
+                  <span class="history-meta-line">Abgeschlossen · 3 Treffer · 100 %</span>
+                  <span>Lokaler Suchverlauf</span>
+                </span>
+              </button>
+            </article>
+          </section>
+          <section class="history-results" aria-label="Beispielhafte Trefferliste">
+            <div class="history-detail-header">
+              <div class="section-heading">
+                <span class="eyebrow">Ausgewählter Suchlauf</span>
+                <h2>Paul Schultze-Naumburg</h2>
+              </div>
+              <div class="history-meta-grid" aria-label="Metadaten des Beispiel-Suchlaufs">
+                <span><strong>Status</strong>Abgeschlossen</span>
+                <span><strong>Treffer</strong>3 Hinweise</span>
+                <span><strong>Fortschritt</strong>100 %</span>
+                <span><strong>Quelle</strong>NARA A3340</span>
+              </div>
+            </div>
+            <div class="section-heading history-results-heading">
+              <span class="eyebrow">Trefferliste</span>
+              <h2>Nach Rangstärke</h2>
+            </div>
+            <div class="ranked-list history-ranked-list">
+              {#each demoDisplayResults as result}
+                <article class="history-result-entry" aria-label={`Treffer ${result.name}`}>
+                  <button class="match-row" type="button" onclick={() => openResultDetail(result, 'start')}>
+                    <span class="portrait-frame">
+                      {#if result.portraitUrl}
+                        <img src={result.portraitUrl} alt={`Vorschau ${result.name}`} />
+                      {:else}
+                        <span class="portrait-placeholder">{initials(result.name)}</span>
+                      {/if}
+                    </span>
+                    <span class="match-summary">
+                      <span class="match-topline">
+                        <span class={`source-badge ${sourceBadgeClass(result.dataSource)}`}>{result.dataSource}</span>
+                        <span class="score-pill">{scoreLabel(result.matchScore)}</span>
+                      </span>
+                      <span class="match-name">{result.name}</span>
+                      <span class="match-record">{result.naid}</span>
+                      <span class="match-facts">
+                        <span>Geburtsdatum: {result.birthDate}</span>
+                        <span>Wohnort: {result.residencePlace}</span>
+                      </span>
+                    </span>
+                  </button>
+                </article>
+              {/each}
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="landing-project" aria-label="Projekt, Aufbau und Methodik">
         <div class="section-heading">
-          <span class="eyebrow">Recherche-Workflow</span>
-          <h2>Vom eigenen API-Schlüssel zum zitierfähigen Forschungsbericht</h2>
+          <span class="eyebrow">NARATrace verstehen</span>
+          <h2>Projekt, Aufbau und Methodik</h2>
         </div>
-        <div class="research-setup-strip">
-          <div>
-            <strong>{settings?.nara_api_key_configured ? 'Eigener NARA API-Schlüssel ist eingerichtet' : 'Eigener NARA API-Schlüssel fehlt noch'}</strong>
-            <span>
-              {#if settings?.nara_api_key_configured}
-                Quelle: {settings.nara_api_key_source}. Lokaler Zähler: {apiUsageLabel(settings.nara_api_usage)}.
-              {:else}
-                Speichere deinen persönlichen Schlüssel lokal im OS-Keyring, damit echte NARA-Treffer abgerufen werden können.
-              {/if}
-            </span>
-          </div>
-          <a class="button secondary" href="#settings" onclick={(event) => navigate(event, 'settings')}>API-Schlüssel verwalten</a>
-        </div>
-        <div class="workflow-cards">
+        <div class="landing-project-cards">
           <article>
-            <span>1</span>
-            <strong>Einrichten</strong>
-            <p>Eigenen NARA API-Schlüssel speichern und testen. Schlüssel werden nicht ins Repository oder Frontend geschrieben.</p>
+            <span>Das Projekt</span>
+            <p>Ein unabhängiges lokales Forschungswerkzeug für quellennahe Arbeit mit NARAs digitalisierten Beständen – ohne Cloud-Backend und ohne automatische Identitätsbehauptungen.</p>
+            <a href="#about" onclick={(event) => navigate(event, 'about')}>Projektbeschreibung lesen →</a>
           </article>
           <article>
-            <span>2</span>
-            <strong>Person suchen</strong>
-            <p>Suchprofil mit Varianten, Orten, Jahren und Identifikationsnummern anlegen. Der Suchjob läuft im Hintergrund.</p>
+            <span>Der Aufbau</span>
+            <p>Das offizielle Manifest und Roll-JSONs werden lokal gecacht. SQLite FTS5 durchsucht NARA-OCR und bewahrt Frame-Provenienz, während Bilder nur für konkrete Treffer geladen werden.</p>
+            <a href="#architecture" onclick={(event) => navigate(event, 'architecture')}>Architektur lesen →</a>
           </article>
           <article>
-            <span>3</span>
-            <strong>Quellen prüfen</strong>
-            <p>Treffer, Originalseite, OCR/Transkript und Evidenzen vergleichen. Korrekturen bleiben lokal nachvollziehbar.</p>
-          </article>
-          <article>
-            <span>4</span>
-            <strong>Bericht exportieren</strong>
-            <p>Suchverlauf als Markdown-Bericht mit Profil, Abfragen, Trefferliste, Evidenzen und Grenzen sichern.</p>
+            <span>Die Methodik</span>
+            <p>Namensvarianten, Fuzzy-Suche und Nummern liefern eine Reihenfolge von Frames. Der Score bleibt ein Retrieval-Signal; die Originalkarte entscheidet.</p>
+            <a href="#methodology" onclick={(event) => navigate(event, 'methodology')}>Methodik lesen →</a>
           </article>
         </div>
       </section>
@@ -1917,13 +2197,21 @@
             </div>
           {/if}
           <div class="actions report-actions">
+            <label class="report-format">
+              <span>Exportformat</span>
+              <select bind:value={reportFormat} aria-label="Exportformat">
+                <option value="pdf">PDF (Standard)</option>
+                <option value="html">HTML</option>
+                <option value="markdown">Markdown</option>
+              </select>
+            </label>
             <button
               class="button secondary"
               type="button"
               onclick={() => downloadResearchReport(currentJob)}
               disabled={exportingJobId === currentJob.id}
             >
-              {exportingJobId === currentJob.id ? 'Erzeuge Bericht...' : 'Recherchebericht exportieren'}
+              {exportingJobId === currentJob.id ? 'Erzeuge Bericht...' : `Als ${reportFormat === 'markdown' ? 'Markdown' : reportFormat.toUpperCase()} exportieren`}
             </button>
           </div>
         </section>
@@ -1961,7 +2249,7 @@
           {/if}
           <div class="section-heading">
             <span class="eyebrow">Treffer</span>
-            <h2>Nach Trefferwahrscheinlichkeit</h2>
+            <h2>Nach Rangstärke</h2>
           </div>
           <div class="result-card-list">
             {#each currentResults as result}
@@ -1973,7 +2261,7 @@
                     <span class="score-pill">{scoreLabel(result.matchScore)}</span>
                     </div>
                     <h3>{result.name}</h3>
-                    <p>{result.category} · Trefferwahrscheinlichkeit {scoreLabel(result.matchScore)} · {result.naid}</p>
+                    <p>{result.category} · Rangstärke {scoreLabel(result.matchScore)} · {result.naid}</p>
                   </div>
                   <button class="button secondary" type="button" onclick={() => openResultDetail(result, 'search')}>
                     Vollansicht öffnen
@@ -2123,7 +2411,7 @@
                     {#if (result.matchedFields ?? []).length > 0}
                       <section class="matched-fields" aria-label="Gesuchte und gefundene Metadaten">
                         <span class="eyebrow">Gesucht und gefunden</span>
-                        <p>Hover über einen Eintrag markiert die OCR-Fundstelle in der aktuell gewählten Kartenansicht.</p>
+                        <p>Hover über einen Eintrag sucht die passende Kartenansicht und markiert die OCR-Fundstelle gelb über dem Bild.</p>
                         <div class="transcript-lines">
                           {#each result.matchedFields ?? [] as field}
                             {@const fieldLineId = matchedFieldLineId(result, field)}
@@ -2131,11 +2419,11 @@
                               class="transcript-line image-hit-line"
                               class:active={focusedLineId === fieldLineId}
                               type="button"
-                              onmouseenter={() => setHoveredLine(fieldLineId)}
+                              onmouseenter={() => void activateMatchedField(result, field, 'hover')}
                               onmouseleave={clearHoveredLine}
-                              onfocus={() => setHoveredLine(fieldLineId)}
+                              onfocus={() => void activateMatchedField(result, field, 'hover')}
                               onblur={clearHoveredLine}
-                              onclick={() => togglePinnedLine(fieldLineId)}
+                              onclick={() => void activateMatchedField(result, field, 'pin')}
                             >
                               <span>{field.label}</span>
                               <strong>{field.value}</strong>
@@ -2329,13 +2617,21 @@
                 </span>
               </div>
               <div class="actions report-actions">
+                <label class="report-format">
+                  <span>Exportformat</span>
+                  <select bind:value={reportFormat} aria-label="Exportformat">
+                    <option value="pdf">PDF (Standard)</option>
+                    <option value="html">HTML</option>
+                    <option value="markdown">Markdown</option>
+                  </select>
+                </label>
                 <button
                   class="button secondary"
                   type="button"
                   onclick={() => downloadResearchReport(selectedHistoryJob)}
                   disabled={exportingJobId === selectedHistoryJob.id}
                 >
-                  {exportingJobId === selectedHistoryJob.id ? 'Erzeuge Bericht...' : 'Recherchebericht exportieren'}
+                  {exportingJobId === selectedHistoryJob.id ? 'Erzeuge Bericht...' : `Als ${reportFormat === 'markdown' ? 'Markdown' : reportFormat.toUpperCase()} exportieren`}
                 </button>
               </div>
             </div>
@@ -2379,7 +2675,7 @@
               {/if}
               <div class="section-heading history-results-heading">
                 <span class="eyebrow">Trefferliste</span>
-                <h2>Nach Trefferwahrscheinlichkeit</h2>
+                <h2>Nach Rangstärke</h2>
               </div>
               <div class="ranked-list history-ranked-list">
                 {#each selectedHistoryResults as result}
@@ -2452,7 +2748,7 @@
         <div>
           <span class={`source-badge ${sourceBadgeClass(detailResult.dataSource)}`}>{detailResult.dataSource}</span>
           <h1>{detailResult.name}</h1>
-          <p>{detailResult.category} · Trefferwahrscheinlichkeit {scoreLabel(detailResult.matchScore)} · {detailResult.naid}</p>
+          <p>{detailResult.category} · Rangstärke {scoreLabel(detailResult.matchScore)} · {detailResult.naid}</p>
         </div>
       </div>
 
@@ -2473,6 +2769,24 @@
                   <span>{cardViewLabel(selectedDetailResult, currentMediaIndex(selectedDetailResult))} · {currentMediaIndex(selectedDetailResult) + 1} / {detailResult.mediaPages.length}</span>
                   <button class="button secondary compact-button" type="button" onclick={() => nextMediaPage(selectedDetailResult)} disabled={currentMediaIndex(selectedDetailResult) >= detailResult.mediaPages.length - 1}>
                     Weiter
+                  </button>
+                {/if}
+                {#if isA3340CardSequence(detailResult)}
+                  <button
+                    class="button secondary compact-button"
+                    class:active={cardDisplayMode(detailResult) === 'single'}
+                    type="button"
+                    onclick={() => setCardDisplayMode(selectedDetailResult, 'single')}
+                  >
+                    Rohansicht
+                  </button>
+                  <button
+                    class="button secondary compact-button"
+                    class:active={cardDisplayMode(detailResult) === 'spread'}
+                    type="button"
+                    onclick={() => setCardDisplayMode(selectedDetailResult, 'spread')}
+                  >
+                    Kartenpaar
                   </button>
                 {/if}
                 {#if mediaPage.mediaType === 'image' && mediaPage.mediaUrl}
@@ -2502,7 +2816,87 @@
                 </div>
               </div>
             {/if}
-            {#if mediaPage?.mediaUrl && mediaPage.mediaType === 'image'}
+            {#if cardDisplayMode(detailResult) === 'spread' && cardPageGroups(detailResult).front.length > 0}
+              {@const cardGroups = cardPageGroups(detailResult)}
+              <section class="card-spread" aria-label="Vorder- und Rückseiten der Karte">
+                <p class="card-spread-note">Faltkarte: Vorderseite 1-2, Rückseite 1-2 und weitere Frames als Sonstige. Bei kurzen Folgen hilft die OCR bei der Zuordnung. Wähle ein Bild für die Rohansicht mit OCR-Markierungen.</p>
+                <div class="card-spread-groups">
+                  <section class="card-spread-group" aria-label="Vorderseiten der Karte">
+                    <div class="card-spread-group-heading">
+                      <span class="eyebrow">Vorderseite</span>
+                      <strong>{cardGroups.front.length === 1 ? '1 Bild' : `${cardGroups.front.length} Bilder`}</strong>
+                    </div>
+                    <div class="card-spread-pages">
+                      {#each cardGroups.front as page}
+                        <button
+                          class="card-spread-page"
+                          type="button"
+                          onclick={() => {
+                            const pageIndex = selectedDetailResult.mediaPages.indexOf(page);
+                            setMediaPage(selectedDetailResult, pageIndex);
+                            setCardDisplayMode(selectedDetailResult, 'single');
+                          }}
+                          aria-label={`${cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))} in Rohansicht öffnen`}
+                        >
+                          <span>{cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))} · Frame {page.pageNumber}</span>
+                          <img src={page.mediaUrl ?? ''} alt={`${cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))}: ${page.label}`} />
+                        </button>
+                      {/each}
+                    </div>
+                  </section>
+                  {#if cardGroups.back.length > 0}
+                    <section class="card-spread-group" aria-label="Rückseiten der Karte">
+                      <div class="card-spread-group-heading">
+                        <span class="eyebrow">Rückseite</span>
+                        <strong>{cardGroups.back.length === 1 ? '1 Bild' : `${cardGroups.back.length} Bilder`}</strong>
+                      </div>
+                      <div class="card-spread-pages">
+                        {#each cardGroups.back as page}
+                          <button
+                            class="card-spread-page"
+                            type="button"
+                            onclick={() => {
+                              const pageIndex = selectedDetailResult.mediaPages.indexOf(page);
+                              setMediaPage(selectedDetailResult, pageIndex);
+                              setCardDisplayMode(selectedDetailResult, 'single');
+                            }}
+                            aria-label={`${cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))} in Rohansicht öffnen`}
+                          >
+                            <span>{cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))} · Frame {page.pageNumber}</span>
+                            <img src={page.mediaUrl ?? ''} alt={`${cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))}: ${page.label}`} />
+                          </button>
+                        {/each}
+                      </div>
+                    </section>
+                  {/if}
+                  {#if cardGroups.other.length > 0}
+                    <section class="card-spread-group" aria-label="Sonstige Kartenansichten">
+                      <div class="card-spread-group-heading">
+                        <span class="eyebrow">Sonstige</span>
+                        <strong>{cardGroups.other.length === 1 ? '1 Bild' : `${cardGroups.other.length} Bilder`}</strong>
+                      </div>
+                      <div class="card-spread-pages">
+                        {#each cardGroups.other as page}
+                          <button
+                            class="card-spread-page"
+                            type="button"
+                            onclick={() => {
+                              const pageIndex = selectedDetailResult.mediaPages.indexOf(page);
+                              setMediaPage(selectedDetailResult, pageIndex);
+                              setCardDisplayMode(selectedDetailResult, 'single');
+                            }}
+                            aria-label={`${cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))} in Rohansicht öffnen`}
+                          >
+                            <span>{cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))} · Frame {page.pageNumber}</span>
+                            <img src={page.mediaUrl ?? ''} alt={`${cardViewLabel(detailResult, selectedDetailResult.mediaPages.indexOf(page))}: ${page.label}`} />
+                          </button>
+                        {/each}
+                      </div>
+                    </section>
+                  {/if}
+                </div>
+              </section>
+            {:else if mediaPage?.mediaUrl && mediaPage.mediaType === 'image'}
               <div class="document-stage interactive-media-stage">
                 <div
                   class="media-pan-layer"
@@ -2600,7 +2994,7 @@
           {#if (detailResult.matchedFields ?? []).length > 0}
             <section class="matched-fields" aria-label="Gesuchte und gefundene Metadaten">
               <span class="eyebrow">Gesucht und gefunden</span>
-              <p>Hover über einen Eintrag markiert die OCR-Fundstelle in der aktuell gewählten Kartenansicht.</p>
+              <p>Hover über einen Eintrag sucht die passende Kartenansicht und markiert die OCR-Fundstelle gelb über dem Bild.</p>
               <div class="transcript-lines">
                 {#each detailResult.matchedFields ?? [] as field}
                   {@const fieldLineId = matchedFieldLineId(detailResult, field)}
@@ -2608,11 +3002,11 @@
                     class="transcript-line image-hit-line"
                     class:active={focusedLineId === fieldLineId}
                     type="button"
-                    onmouseenter={() => setHoveredLine(fieldLineId)}
+                    onmouseenter={() => void activateMatchedField(selectedDetailResult, field, 'hover')}
                     onmouseleave={clearHoveredLine}
-                    onfocus={() => setHoveredLine(fieldLineId)}
+                    onfocus={() => void activateMatchedField(selectedDetailResult, field, 'hover')}
                     onblur={clearHoveredLine}
-                    onclick={() => togglePinnedLine(fieldLineId)}
+                    onclick={() => void activateMatchedField(selectedDetailResult, field, 'pin')}
                   >
                     <span>{field.label}</span>
                     <strong>{field.value}</strong>
@@ -2697,13 +3091,6 @@
                 </p>
               </section>
             {/if}
-            <TranscriptAnnotationViewer
-              documentId={`naratrace-${detailResult.key}`}
-              title={detailResult.title}
-              text={transcriptDraft}
-              source={detailResult.transcriptSource}
-              terms={detailResult.highlightTerms ?? []}
-            />
             <label>
               Transkription
               <textarea class="transcript-editor" bind:value={transcriptDraft} rows="16"></textarea>
@@ -2943,11 +3330,35 @@
         <div>
           <h1>Methodik</h1>
           <p>
-            NARATrace bewertet Archivtreffer als Forschungshinweise. Das System sammelt Kandidaten,
-            ordnet Evidenzen und macht sichtbar, warum ein Treffer plausibel oder unsicher ist.
+            Ein technischer Leitfaden zur Recherche in NARAs A3340-Kartei: von der öffentlichen
+            Quellstruktur über den lokalen Volltextindex bis zur reproduzierbaren Rangfolge einzelner Kartenframes.
           </p>
         </div>
       </div>
+
+      <section class="method-source" aria-label="Quelle und Datenzugang">
+        <div>
+          <span class="eyebrow">Primärquelle</span>
+          <h2>NARAs Daten, dein Schlüssel, lokaler Index</h2>
+          <p>
+            Die A3340-Daten und der Aufbau dieses Zugriffswegs basieren auf dem offiziellen
+            <a href="https://github.com/usnationalarchives/nsdap" target="_blank" rel="noreferrer">NARA-NSDAP-Repository</a>.
+            Das Manifest beschreibt jede Rolle mit NAID, Reihe (MFKL/MFOK), Rollenkennung und S3-Pfad. Die zugehörige
+            Rollendatei enthält je Scan <code>objectFilename</code>, <code>objectUrl</code> und NARAs
+            <code>extractedText</code>.
+          </p>
+        </div>
+        <aside>
+          <strong>Catalog API</strong>
+          <p>
+            Der persönliche <em>NARA Catalog API Key</em> wird nur für den geschützten Catalog-Fallback benötigt;
+            er liegt im Betriebssystem-Keyring, nie im Browser oder in SQLite. Das öffentliche A3340-Dataset braucht
+            keinen Key. Details stellt NARA in der
+            <a href="https://catalog.archives.gov/api/v2/api-docs/" target="_blank" rel="noreferrer">Catalog-API-Dokumentation</a>
+            bereit.
+          </p>
+        </aside>
+      </section>
 
       <section class="method-model" aria-label="Forschungsmodell">
         <div class="section-heading">
@@ -3000,6 +3411,87 @@
         </div>
       </section>
 
+      <section class="technical-method" aria-label="Technischer Aufbau">
+        <div class="section-heading">
+          <span class="eyebrow">Tutorial · Retrieval-Pipeline</span>
+          <h2>So ist der Suchweg aufgebaut</h2>
+          <p>Die folgenden Schritte entsprechen dem implementierten Datenfluss und lassen sich mit SQLite FTS5 und den öffentlichen NARA-JSON-Dateien nachbauen.</p>
+        </div>
+        <div class="technical-steps">
+          <article>
+            <span>01</span>
+            <h3>Manifest laden &amp; Rollen lesen</h3>
+            <p>Das offizielle <code>docs/nsdap.json</code> wird lokal gecacht. Für jede MFKL-/MFOK-Rolle wird anschließend <code>https://nara-nsdap.s3.us-east-2.amazonaws.com/&lt;pfad&gt;/&lt;NAID&gt;.json</code> geladen – mit Timeout, Retry bei 408/429/5xx und begrenzter Parallelität.</p>
+          </article>
+          <article>
+            <span>02</span>
+            <h3>Frames in FTS5 schreiben</h3>
+            <p>Aus <code>record.digitalObjects[]</code> wird pro Scan ein lokaler Datensatz: <code>roll_naid</code>, Reihe, Rolle, Frame-Nummer, Objekt-ID, Dateiname, Original-URL und NARA-OCR. Die SQLite-FTS5-Tabelle indexiert normalisierten Text sowie separat extrahierte Zahlenfolgen; Originalbilder werden nicht massenhaft kopiert.</p>
+          </article>
+          <article>
+            <span>03</span>
+            <h3>Abfrage erzeugen</h3>
+            <p>Namen werden kleingeschrieben, von Diakritika und Trennzeichen bereinigt. Daraus entstehen gewichtete Varianten: Original 1,00; Bindestrich als Leerzeichen 0,94; Bindestrich entfernt 0,88; Umlaut-Varianten 0,90/0,82; bei <em>von</em>-Namen zusätzliche Kurzformen. Eine Mitgliedsnummer wird nur als mindestens vierstellige, zusammenhängende Ziffernfolge gesucht.</p>
+          </article>
+          <article>
+            <span>04</span>
+            <h3>Kandidaten abrufen</h3>
+            <p>FTS5 sucht <code>normalized_text:term</code> (mehrteilige Namen mit <code>AND</code>) und <code>number_terms:nummer</code>. Anschließend wird nur innerhalb gleich langer Wortfenster der OCR mit einem Ratio-Vergleich nachähnlich gesucht – nie gegen eine ganze Seite, damit zufällige Teilzeichenketten keinen künstlichen Höchstwert erhalten.</p>
+          </article>
+          <article>
+            <span>05</span>
+            <h3>Frame, nicht Person, bewerten</h3>
+            <p>Ein exakter Namens- bzw. Variantenfund startet bei <code>72 + 24 × Varianten-Gewicht</code>. Der Vorname ergänzt bei mindestens 65 Punkten <code>+4</code>. Fuzzy-Funde müssen mindestens 70 Punkte erreichen. Enthält derselbe Frame die gesuchte Mitgliedsnummer, kommen <code>+8</code> hinzu, gedeckelt bei 99.</p>
+          </article>
+          <article>
+            <span>06</span>
+            <h3>Karte &amp; Quelle prüfen</h3>
+            <p>Ein isolierter Nummerntreffer erhält 88 Punkte, plus 7 für den Nachnamen und 3 für den Vornamen, ebenfalls maximal 99. Benachbarte Scans werden als Vorder-/Rückseite einer Karte gebündelt; nur die drei stärksten Karten werden materialisiert. Rolle, NAID, Frame, Objektdatei, URL und Textursprung bleiben am Treffer erhalten.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="method-tutorial" aria-label="Tutorial zum Nachbauen der Suche">
+        <div class="section-heading">
+          <span class="eyebrow">Schritt-für-Schritt · selbst nachbauen</span>
+          <h2>Ein minimaler, reproduzierbarer Suchindex</h2>
+          <p>Dieses Rezept beschreibt die kleinste sinnvolle Version der verwendeten Pipeline. Es trennt absichtlich das Finden einer Karte von der historischen Aussage über eine Person.</p>
+        </div>
+        <article class="tutorial-chapter">
+          <div class="tutorial-chapter-heading"><span>1</span><div><h3>Recherchefrage als Datenvertrag formulieren</h3><p>Definiere vor jedem Abruf, was gesucht wird und was nur Prüfkontext ist. Ein Nachname ist Pflicht; Vorname und Mitgliedsnummer verbessern das Retrieval. Ort und Datum werden mitgespeichert, aber nicht in einen Personen-Score umgedeutet.</p></div></div>
+          <pre class="tutorial-code"><code>last_name = "Schultze-Naumburg"  # Pflicht<br />first_name = "Paul"  # optional<br />membership_number = "347 541"  # optional<br />birth_date, place = "10.06.1869", "Almrich"  # Prüfkontext<br /><br />Regel: Fehlendes OCR-Merkmal beweist nie das Fehlen der Quelle.</code></pre>
+        </article>
+        <article class="tutorial-chapter">
+          <div class="tutorial-chapter-heading"><span>2</span><div><h3>Offizielle Daten lesen, nicht den Catalog scrapen</h3><p>Lade das NARA-Manifest <code>docs/nsdap.json</code>. Jede Rolle verweist auf ein öffentliches Roll-JSON. Aus <code>record.digitalObjects</code> wird ein Datensatz pro Scan – nicht pro vermuteter Person.</p></div></div>
+          <pre class="tutorial-code"><code>roll_json = GET(".../&lt;path&gt;/&lt;NAID&gt;.json")<br />for frame_no, obj in enumerate(roll_json.record.digitalObjects, start=1):<br />    speichern(roll_naid, collection, box, frame_no,<br />              obj.objectFilename, obj.objectUrl, obj.extractedText)</code></pre>
+          <p class="tutorial-note">Cache Manifest und Roll-JSONs lokal. Wiederhole Abrufe bei 408, 429 und 5xx mit begrenzter Parallelität; ein Fehlschlag darf vorhandene Indexdaten nicht löschen.</p>
+        </article>
+        <article class="tutorial-chapter">
+          <div class="tutorial-chapter-heading"><span>3</span><div><h3>SQLite FTS5 mit Provenienz anlegen</h3><p>Die Volltextsuche beschleunigt nur das Auffinden. Rolle, Frame und Original-URL bleiben deshalb unindiziert am Frame gespeichert.</p></div></div>
+          <pre class="tutorial-code"><code>CREATE VIRTUAL TABLE nsdap_frames_fts USING fts5(<br />  frame_key UNINDEXED, roll_naid UNINDEXED, collection UNINDEXED,<br />  box UNINDEXED, frame_number UNINDEXED, object_filename UNINDEXED,<br />  object_url UNINDEXED, extracted_text UNINDEXED,<br />  normalized_text, number_terms<br />);<br /><br />MATCH 'normalized_text:schultze AND normalized_text:naumburg'</code></pre>
+        </article>
+        <article class="tutorial-chapter score-chapter">
+          <div class="tutorial-chapter-heading"><span>4</span><div><h3>Retrieval-Score exakt berechnen</h3><p>Der Wert ordnet Frames für die nächste Sichtprüfung. Er ist kein Identitäts- oder Wahrscheinlichkeitswert. Es zählt der beste Fundweg; jeder Endwert ist bei 99 gedeckelt.</p></div></div>
+          <div class="score-ledger" role="table" aria-label="Gewichtung des Retrieval-Scores">
+            <div role="row" class="score-ledger-head"><span>Signal</span><span>Rechnung</span><span>Beispiel</span></div>
+            <div role="row"><span>Exakte Namensvariante</span><span><code>72 + 24 × Gewicht</code></span><span>Original 1,00 = 96,0</span></div>
+            <div role="row"><span>Bindestrich als Leerzeichen</span><span><code>72 + 24 × 0,94</code></span><span>94,56</span></div>
+            <div role="row"><span>Bindestrich entfernt</span><span><code>72 + 24 × 0,88</code></span><span>93,12</span></div>
+            <div role="row"><span>Umlautvarianten</span><span><code>72 + 24 × 0,90 / 0,82</code></span><span>93,60 / 91,68</span></div>
+            <div role="row"><span>Vorname im selben OCR-Text</span><span><code>+4</code>, nur ab 65</span><span>96 → 100, dann 99</span></div>
+            <div role="row"><span>Fuzzy-Fund</span><span><code>ratio(Wortfenster) × Gewicht</code></span><span>nur ab 70</span></div>
+            <div role="row"><span>Nummer im Namens-Treffer</span><span><code>+8</code></span><span>maximal 99</span></div>
+            <div role="row"><span>Isolierter exakter Nummerntreffer</span><span><code>88 + 7 Nachname + 3 Vorname</code></span><span>maximal 99</span></div>
+          </div>
+          <pre class="tutorial-code"><code>best = max(exact_variant_score, fuzzy_window_score)<br />if first_name_in_ocr and best &gt;= 65: best = min(100, best + 4)<br />if membership_number_in_same_frame: best = min(99, best + 8)<br />accept = best &gt;= 70<br /><br />Nie partial_ratio gegen eine ganze OCR-Seite rechnen:<br />nur Wortfenster mit derselben Wortanzahl wie die Namensvariante.</code></pre>
+        </article>
+        <article class="tutorial-chapter">
+          <div class="tutorial-chapter-heading"><span>5</span><div><h3>Frames zu prüfbaren Karten bündeln</h3><p>Benachbarte Scans können Vorderseite, Rückseite und Fortsetzung derselben Karte sein. Bündele sie über Rolle und Framefolge; zähle sie nicht als unabhängige Treffer. Materialisiere erst danach höchstens die drei stärksten Kartenbilder.</p></div></div>
+          <pre class="tutorial-code"><code>Sortierung: retrieval_score absteigend, dann Rolle, dann Frame<br />Deduplizierung: (roll_naid, frame_number)<br />Kartenkontext: bis zu 4 Frames zurück, höchstens 12 Frames vorwärts<br />Ausgabe: höchstens 3 Karten mit Rolle + Frame + URL + OCR-Quelle</code></pre>
+          <p class="tutorial-note">Der letzte Schritt bleibt menschlich: Originalkarte öffnen, OCR gegen das Bild lesen, Widersprüche notieren, NARA-Referenz prüfen und erst dann einen Befund formulieren.</p>
+        </article>
+      </section>
+
       <section class="workflow-section" aria-label="Workflow-Schema">
         <div class="section-heading">
           <span class="eyebrow">Workflow-Schema</span>
@@ -3047,19 +3539,21 @@
 
       <section class="method-grid" aria-label="Bewertung und Grenzen">
         <article class="method-panel">
-          <span class="eyebrow">Ranking</span>
-          <h2>Was die Trefferwahrscheinlichkeit meint</h2>
+          <span class="eyebrow">Score lesen</span>
+          <h2>Retrieval-Score ≠ Identitätswahrscheinlichkeit</h2>
           <p>
-            Der Score beschreibt Plausibilität im Vergleich zu anderen Kandidaten. Er ist hoch, wenn mehrere Merkmale
-            konsistent zusammenpassen, und niedriger, wenn nur Namensähnlichkeit oder unsichere Textstellen vorliegen.
+            Der angezeigte Grad der Relevanz beantwortet ausschließlich: „Welchen Frame sollte ich zuerst öffnen?“
+            Er ist kein statistisches Personenmodell und keine Prozentwahrscheinlichkeit. 99 ist bewusst die Obergrenze:
+            Auch Name und Nummer im OCR ersetzen die Prüfung des Digitalisats nicht.
           </p>
         </article>
         <article class="method-panel">
           <span class="eyebrow">Transkription</span>
           <h2>Warum manuelle Korrekturen wichtig sind</h2>
           <p>
-            OCR und extrahierte Catalog-Texte können Fehler enthalten. Korrigierte Transkriptionen bleiben lokal
-            gespeichert und verbessern die Nachvollziehbarkeit eines konkreten Suchverlaufs.
+            <code>extractedText</code> ist NARAs maschinelles Textextrakt, nicht die Quelle selbst. Lokale OCR und
+            Korrekturen werden getrennt gespeichert und verbessern die Prüfung eines Suchverlaufs; sie überschreiben
+            weder das NARA-Transkript noch dessen Provenienz.
           </p>
         </article>
         <article class="method-panel">
@@ -3072,13 +3566,29 @@
         </article>
       </section>
     </section>
+  {:else if activeRoute === 'architecture'}
+    <section class="page wide document-page">
+      <div class="page-header">
+        <div>
+          <span class="eyebrow">Technische Dokumentation</span>
+          <h1>Aufbau von NARATrace</h1>
+          <p>Die aktuelle Architekturdatei wird hier unverändert als Markdown angezeigt.</p>
+        </div>
+        <a class="button secondary" href="#methodology" onclick={(event) => navigate(event, 'methodology')}>Zur Methodik</a>
+      </div>
+      <article class="markdown-document">{@html architectureDocumentHtml}</article>
+    </section>
   {:else if activeRoute === 'about'}
-    <section class="page">
-      <h1>Über NARATrace</h1>
-      <p>
-        NARATrace ist ein lokales Forschungswerkzeug für quellennahe Arbeit mit dem National Archives Catalog.
-        Die Anwendung ist unabhängig und inoffiziell.
-      </p>
+    <section class="page wide document-page">
+      <div class="page-header">
+        <div>
+          <span class="eyebrow">Projektbeschreibung</span>
+          <h1>Über NARATrace</h1>
+          <p>Die README des Projekts wird hier als Markdown-Referenz angezeigt.</p>
+        </div>
+        <a class="button secondary" href="#architecture" onclick={(event) => navigate(event, 'architecture')}>Zum Aufbau</a>
+      </div>
+      <article class="markdown-document">{@html projectDocumentHtml}</article>
     </section>
   {/if}
 </main>

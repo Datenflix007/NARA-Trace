@@ -1,5 +1,15 @@
 # NARATrace Nutzeranleitung
 
+## Karten lesen: Rohansicht und Kartenpaar
+
+Bei A3340-Treffern oeffnet **Vollansicht oeffnen** die Einzelansicht eines Frames. Diese Rohansicht bleibt fuer OCR-Markierungen, Zoom und genaue Kontrolle gedacht. Bei Karten mit mehreren Bildseiten schaltet **Kartenpaar** auf eine geordnete Lesefläche: Zuerst erscheinen **Vorderseite 1** und **Vorderseite 2**, danach **Rückseite 1** und **Rückseite 2**. Zusätzliche Frames werden als **Sonstige** gezeigt statt fälschlich als Rückseite gezählt. Bei kurzen Folgen hilft die OCR nur dabei zu erkennen, ob die zweite Seite schon die Rückseite ist. Die Gruppierung ist eine Lesehilfe und muss am Original geprüft werden. Ein Klick auf eine Seite führt zurück in die Einzelansicht.
+
+Unter **Gesucht und gefunden** ist jeder Eintrag mit dem Bild verbunden. Hover ueber einen Namen, eine Mitgliedsnummer oder eine Namensvariante durchsucht die vorhandenen Kartenansichten nach der realen OCR-Fundstelle, wechselt falls noetig zur passenden Seite und markiert den Bereich gelb. Keine gelbe Flaeche bedeutet nicht automatisch, dass der Wert falsch ist: Die lokale OCR kann ihn uebersehen haben.
+
+### Rangstaerke richtig lesen
+
+Die Rangstaerke ordnet Kandidaten innerhalb eines Suchlaufs. Sie ist weder eine statistische Wahrscheinlichkeit noch ein Identitaetsbeweis. Gleiche Vorder-/Rueckseiten derselben Kartenfolge werden zu einem Ergebnis gebuendelt, damit nicht mehrere Frames derselben Karte als konkurrierende 100-Prozent-Treffer erscheinen.
+
 NARATrace ist ein lokales Recherchewerkzeug. Treffer sind prüfbare Hinweise, keine automatisch gesicherten Identifizierungen.
 
 ## Installation und Schlüssel
@@ -71,6 +81,6 @@ Ein hoher Name-Score ohne passende unabhängige Merkmale ist kein Identitätsnac
 
 ## Lokale Dokumente, Verläufe und Exporte
 
-**Lokale Dokumente** verarbeitet PDF-, Bild- und TIFF-Dateien auf dem lokalen Rechner. **Suchverläufe** öffnen, löschen oder exportieren vergangene Jobs. Die manuelle Transkriptkorrektur ist eine lokale Annotation; sie überschreibt weder das Original noch die dokumentierte NARA-Textquelle.
+**Lokale Dokumente** verarbeitet PDF-, Bild- und TIFF-Dateien auf dem lokalen Rechner. **Suchverläufe** öffnen, löschen oder exportieren vergangene Jobs. Beim Recherchebericht wähle das gewünschte Format: **PDF** ist die Voreinstellung für eine gut lesbare, paginierte Dokumentation; **HTML** eignet sich zum Teilen oder Drucken im Browser; **Markdown** für die Nachbearbeitung in einem Forschungsnotizbuch. Lokal materialisierte Kartenbilder werden in alle drei Formate eingebettet, damit ein Bericht ohne Begleitordner lesbar bleibt. Die manuelle Transkriptkorrektur ist eine lokale Annotation; sie überschreibt weder das Original noch die dokumentierte NARA-Textquelle.
 
 Weitere Hintergründe: [Suchmethodik](SEARCH-METHODOLOGY.md), [NARA-Architektur](NARA_Architekture.md) und [Programmarchitektur](TRAXER_Architekture.md).
