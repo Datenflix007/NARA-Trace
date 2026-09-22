@@ -3,9 +3,11 @@
 > **Vom Namen zum überprüfbaren Kartenframe.**
 > NARATrace unterstützt die Recherche in digitalisierten NSDAP-Mitgliederunterlagen der U.S. National Archives – vom ersten Namenshinweis bis zur Prüfung am Original.
 
-<p align="center">
-  <img src="docs/screenshots/landing-to-card.gif" alt="NARATrace: Von der Landingpage über den Suchverlauf zur Kartenansicht von Paul Schultze-Naumburg" width="960" />
-</p>
+
+
+https://github.com/user-attachments/assets/60d13918-8b2c-413a-93c0-5a7083d261a9
+
+
 
 <p align="center">
   <strong>Lokale A3340-Recherche</strong> ·
