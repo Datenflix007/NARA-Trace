@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "Wenn Sie diese Software verwenden, zitieren Sie sie bitte wie folgt."
+type: software
+title: "NARATrace"
+abstract: >-
+  Lokales, quellennahes Forschungswerkzeug für die Personensuche und
+  Dokumentprüfung in digitalisierten Beständen der U.S. National Archives
+  and Records Administration (NARA). Automatische Treffer sind
+  Forschungshinweise und keine gesicherten Identifizierungen.
+authors:
+  - family-names: "Staacke"
+    given-names: "Felix"
+    orcid: "https://orcid.org/0009-0002-0989-236X"
+    affiliation: "Friedrich-Schiller-Universität Jena"
+version: 1.0.0
+date-released: 2026-11-26
+repository-code: "https://github.com/Datenflix007/NARA-Trace"
+keywords:
+  - National Archives and Records Administration
+  - NARA
+  - Digital History
+  - Quellenkritik
+  - Personenrecherche
+  - OCR
